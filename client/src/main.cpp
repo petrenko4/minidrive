@@ -37,32 +37,103 @@ bool parse_connection_string(const std::string& connection, std::string& ip, std
     return false;
 }
 
+void print_available_commands() {
+    std::cout << "Available commands:\n";
+    std::cout << "  LIST [path]         - Lists files and folders in the given path. If no path is given, lists the current directory.\n";
+    std::cout << "  UPLOAD <local_path> [remote_path] - Uploads a file from the client’s local file system to the server. If remote_path is omitted, the same name is used.\n";
+    std::cout << "  DOWNLOAD <remote_path> [local_path] - Downloads a file from the server to the client. If local_path is omitted, the current directory with the filename from remote is used.\n";
+    std::cout << "  DELETE <path>       - Deletes a file on the server.\n";
+    std::cout << "  CD <path>           - Changes the current directory to the specified path.\n";
+    std::cout << "  MKDIR <path>        - Creates a new folder on the server.\n";
+    std::cout << "  RMDIR <path>        - Removes a folder on the server (recursive).\n";
+    std::cout << "  MOVE <src> <dst>    - Moves or renames a file or folder on the server.\n";
+    std::cout << "  COPY <src> <dst>    - Copies a file or folder on the server.\n";
+    std::cout << "  HELP                - Prints a list of available commands.\n";
+    std::cout << "  EXIT                - Closes the connection and terminates the client.\n";
+}
+
+bool validate_command(const std::string& input) {
+    std::istringstream iss(input);
+    std::string command;
+    iss >> command;
+
+    if (command == "LIST") {
+        // LIST can optionally have one argument
+        std::string path;
+        if (iss >> path) {
+            return true;
+        }
+        return true; // No argument is also valid
+    } else if (command == "UPLOAD") {
+        // UPLOAD requires at least one argument (local_path)
+        std::string local_path;
+        if (iss >> local_path) {
+            return true;
+        }
+        return false;
+    } else if (command == "DOWNLOAD") {
+        // DOWNLOAD requires at least one argument (remote_path)
+        std::string remote_path;
+        if (iss >> remote_path) {
+            return true;
+        }
+        return false;
+    } else if (command == "DELETE") {
+        // DELETE requires exactly one argument (path)
+        std::string path;
+        if (iss >> path) {
+            return true;
+        }
+        return false;
+    } else if (command == "CD" || command == "MKDIR" || command == "RMDIR") {
+        // CD, MKDIR, RMDIR require exactly one argument (path)
+        std::string path;
+        if (iss >> path) {
+            return true;
+        }
+        return false;
+    } else if (command == "MOVE" || command == "COPY") {
+        // MOVE, COPY require two arguments (src and dst)
+        std::string src, dst;
+        if (iss >> src >> dst) {
+            return true;
+        }
+        return false;
+    } else if (command == "HELP" || command == "EXIT") {
+        // HELP and EXIT require no arguments
+        return true;
+    }
+
+    return false; // Unknown command
+}
+
 void interactive_shell(asio::ip::tcp::socket& socket) {
-    std::cout << "Enter messages to send to the server. Type 'exit' to quit.\n";
+    std::cout << "Enter commands. Type 'exit' to quit.\n";
 
     while (true) {
         try {
-            std::string message;
+            std::string input;
             std::cout << "> ";
-            std::getline(std::cin, message);
+            std::getline(std::cin, input);
 
-            if (message == "exit") {
+            if (input == "exit" || input == "EXIT") {
                 std::cout << "Exiting interactive shell.\n";
                 break;
             }
 
-            // Send the message to the server
-            asio::write(socket, asio::buffer(message + "\n"));
+            if (input == "HELP") {
+                print_available_commands();
+                continue;
+            }
 
-            // Wait for the server's response
-            asio::streambuf response;
-            asio::read_until(socket, response, '\n');
-
-            // Print the server's response
-            std::istream response_stream(&response);
-            std::string response_message;
-            std::getline(response_stream, response_message);
-            std::cout << "Server: " << response_message << "\n";
+            if (validate_command(input)) {
+                // Send the command to the server
+                asio::write(socket, asio::buffer(input + "\n"));
+                std::cout << "Command sent to server: " << input << "\n";
+            } else {
+                std::cout << "Invalid command or missing arguments.\n";
+                print_available_commands();
+            }
         } catch (const std::exception& e) {
             std::cerr << "Error: " << e.what() << "\n";
             break;
@@ -80,6 +151,9 @@ void attempt_connection(const std::string& ip, const std::string& port) {
         asio::connect(socket, endpoints);
 
         std::cout << "Successfully connected to " << ip << ":" << port << "\n";
+
+        // Display the prompt immediately after connection
+        std::cout << "> ";
 
         // Start the interactive shell
         interactive_shell(socket);

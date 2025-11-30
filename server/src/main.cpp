@@ -1,6 +1,7 @@
 #include <iostream>
 #include <asio.hpp>
 #include <string>
+#include <signal.h>
 
 #include "minidrive/version.hpp"
 
@@ -57,7 +58,24 @@ void run_server(const std::string& host, const std::string& port) {
     }
 }
 
+void handle_sigint(int) {
+    std::cout << "Server shutting down gracefully...\n";
+    exit(0);
+}
+
 int main(int argc, char* argv[]) {
+
+    // auto err = signal(SIGSEGV, handle_sigint);
+    // if(err == SIG_ERR) {
+    //     std::cerr << "Failed to set signal handler\n";
+    //     return 1;
+    // }
+
+    // while(true) {
+    //     std::cout << "Server still running...\n";
+    //     sleep(3);
+    // }
+
     if (argc != 3) {
         std::cerr << "Usage: " << argv[0] << " <host> <port>\n";
         return 1;
