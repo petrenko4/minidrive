@@ -3,6 +3,9 @@
 #include <string>
 #include "minidrive/version.hpp"
 #include <asio.hpp>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
 
 bool parse_arguments(int argc, char* argv[], std::string& connection, std::string& log_file) {
     if (argc < 2 || argc > 4) {
@@ -107,6 +110,45 @@ bool validate_command(const std::string& input) {
     return false; // Unknown command
 }
 
+std::string create_json_command(const std::string& input) {
+    std::istringstream iss(input);
+    std::string command;
+    iss >> command;
+
+    json json_command;
+    json_command["cmd"] = command;
+
+    if (command == "LIST") {
+        std::string path;
+        if (iss >> path) {
+            json_command["args"]["path"] = path;
+        } else {
+            json_command["args"]["path"] = "."; // Default to current directory
+        }
+    } else if (command == "UPLOAD" || command == "DOWNLOAD") {
+        std::string first_arg, second_arg;
+        if (iss >> first_arg) {
+            json_command["args"][command == "UPLOAD" ? "local_path" : "remote_path"] = first_arg;
+            if (iss >> second_arg) {
+                json_command["args"][command == "UPLOAD" ? "remote_path" : "local_path"] = second_arg;
+            }
+        }
+    } else if (command == "DELETE" || command == "CD" || command == "MKDIR" || command == "RMDIR") {
+        std::string path;
+        if (iss >> path) {
+            json_command["args"]["path"] = path;
+        }
+    } else if (command == "MOVE" || command == "COPY") {
+        std::string src, dst;
+        if (iss >> src >> dst) {
+            json_command["args"]["src"] = src;
+            json_command["args"]["dst"] = dst;
+        }
+    }
+
+    return json_command.dump();
+}
+
 void interactive_shell(asio::ip::tcp::socket& socket) {
     std::cout << "Enter commands. Type 'exit' to quit.\n";
 
@@ -127,9 +169,12 @@ void interactive_shell(asio::ip::tcp::socket& socket) {
             }
 
             if (validate_command(input)) {
-                // Send the command to the server
-                asio::write(socket, asio::buffer(input + "\n"));
-                std::cout << "Command sent to server: " << input << "\n";
+                // Create JSON command
+                std::string json_command = create_json_command(input);
+
+                // Send the JSON command to the server
+                asio::write(socket, asio::buffer(json_command + "\n"));
+                std::cout << "Command sent to server: " << json_command << "\n";
             } else {
                 std::cout << "Invalid command or missing arguments.\n";
                 print_available_commands();

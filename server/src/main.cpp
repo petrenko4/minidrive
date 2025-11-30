@@ -3,8 +3,11 @@
 #include <string>
 #include <signal.h>
 #include <filesystem>
+#include <nlohmann/json.hpp>
 
 #include "minidrive/version.hpp"
+
+using json = nlohmann::json;
 
 void handle_client(asio::ip::tcp::socket &socket) {
     try {
@@ -30,9 +33,25 @@ void handle_client(asio::ip::tcp::socket &socket) {
 
             std::cout << "Received: " << message << "\n";
 
-            // Echo the message back to the client
-            std::string response = "Echo: " + message + "\n";
-            asio::write(socket, asio::buffer(response));
+            try {
+                // Parse the JSON message
+                auto json_message = json::parse(message);
+
+                // Extract the command and arguments
+                std::string command = json_message.at("cmd").get<std::string>();
+                auto args = json_message.value("args", json::object());
+
+                std::cout << "Command: " << command << "\n";
+                std::cout << "Arguments: " << args.dump() << "\n";
+
+                // Handle the command (placeholder for actual implementation)
+                std::string response = "Command received: " + command + "\n";
+                asio::write(socket, asio::buffer(response));
+            } catch (const json::exception& e) {
+                std::cerr << "Invalid JSON received: " << e.what() << "\n";
+                std::string error_message = "Error: Invalid JSON format\n";
+                asio::write(socket, asio::buffer(error_message));
+            }
         }
     } catch (const std::exception& e) {
         std::cerr << "Client disconnected or error: " << e.what() << "\n";
