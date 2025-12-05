@@ -9,12 +9,45 @@
 
 using json = nlohmann::json;
 
-void handle_client(asio::ip::tcp::socket &socket) {
+void handle_client(asio::ip::tcp::socket &socket, const std::string& root_path);
+
+void create_user_directory(const std::string& root_path, const std::string& username) {
+    try {
+        std::string user_folder = root_path + "/" + username;
+        if (!std::filesystem::exists(user_folder)) {
+            std::filesystem::create_directories(user_folder);
+            std::cout << "User directory created at: " << user_folder << "\n";
+        } else {
+            std::cout << "User directory already exists at: " << user_folder << "\n";
+        }
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Failed to create user directory: " + std::string(e.what()));
+    }
+}
+
+void handle_client(asio::ip::tcp::socket &socket, const std::string& root_path) {
     try {
         std::cout << "Client connected: " << socket.remote_endpoint() << "\n";
 
+        // Read the username from the client
+        asio::streambuf buffer;
+        asio::read_until(socket, buffer, '\n');
+        std::istream input_stream(&buffer);
+        std::string username;
+        std::getline(input_stream, username);
+
+        if (username.empty()) {
+            std::cerr << "No username provided by client." << std::endl;
+            return;
+        }
+
+        std::cout << "Username received: " << username << "\n";
+
+        // Create a directory for the user if it doesn't exist
+        create_user_directory(root_path, username);
+
         // Send a welcome message to the client
-        std::string welcome_message = "Welcome to the server!\n";
+        std::string welcome_message = "Welcome, " + username + "!\n";
         asio::write(socket, asio::buffer(welcome_message));
 
         while (true) {
@@ -58,7 +91,7 @@ void handle_client(asio::ip::tcp::socket &socket) {
     }
 }
 
-void run_server(const std::string& host, const std::string& port) {
+void run_server(const std::string& host, const std::string& port, std::string root_path) {
     try {
         asio::io_context io_context;
 
@@ -71,7 +104,7 @@ void run_server(const std::string& host, const std::string& port) {
 
             std::cout << "New connection from " << socket.remote_endpoint() << "\n";
 
-            handle_client(socket);
+            handle_client(socket, root_path);
         }
     } catch (const std::exception& e) {
         std::cerr << "Server error: " << e.what() << "\n";
@@ -139,7 +172,7 @@ int main(int argc, char* argv[]) {
 
         std::cout << "Server starting on port: " << port << " with root path: " << root_path << "\n";
 
-        run_server("0.0.0.0", port);
+        run_server("0.0.0.0", port, root_path);
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";

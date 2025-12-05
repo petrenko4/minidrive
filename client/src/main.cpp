@@ -186,8 +186,24 @@ void interactive_shell(asio::ip::tcp::socket& socket) {
     }
 }
 
-void attempt_connection(const std::string& ip, const std::string& port) {
+std::tuple<std::string, std::string, std::string> parse_client_arguments(const std::string& arg) {
+    std::regex pattern(R"((\w+)@([\d\.]+):(\d+))");
+    std::smatch match;
+
+    if (std::regex_match(arg, match, pattern) && match.size() == 4) {
+        std::string username = match[1];
+        std::string ip = match[2];
+        std::string port = match[3];
+        return {username, ip, port};
+    }
+
+    throw std::invalid_argument("Invalid argument format. Expected: username@<server_ip>:<port>");
+}
+
+void attempt_connection(const std::string& arg) {
     try {
+        auto [username, ip, port] = parse_client_arguments(arg);
+
         asio::io_context io_context;
         asio::ip::tcp::resolver resolver(io_context);
         asio::ip::tcp::resolver::results_type endpoints = resolver.resolve(ip, port);
@@ -195,10 +211,10 @@ void attempt_connection(const std::string& ip, const std::string& port) {
         asio::ip::tcp::socket socket(io_context);
         asio::connect(socket, endpoints);
 
-        std::cout << "Successfully connected to " << ip << ":" << port << "\n";
+        // Send the username to the server
+        asio::write(socket, asio::buffer(username + "\n"));
 
-        // Display the prompt immediately after connection
-        std::cout << "> ";
+        std::cout << "Successfully connected to " << ip << ":" << port << " as user " << username << "\n";
 
         // Start the interactive shell
         interactive_shell(socket);
@@ -208,28 +224,17 @@ void attempt_connection(const std::string& ip, const std::string& port) {
 }
 
 int main(int argc, char* argv[]) {
-    std::string connection;
-    std::string log_file;
+    try {
+        if (argc != 2) {
+            throw std::invalid_argument("Usage: ./client username@<server_ip>:<port>");
+        }
 
-    if (!parse_arguments(argc, argv, connection, log_file)) {
-        std::cerr << "Error: Invalid arguments.\n";
+        std::string arg = argv[1];
+        attempt_connection(arg);
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }
 
-    std::cout << "Connection: " << connection << "\n";
-    if (!log_file.empty()) {
-        std::cout << "Log file: " << log_file << "\n";
-    }
-
-    std::string ip, port;
-    if (!parse_connection_string(connection, ip, port)) {
-        std::cerr << "Error: Invalid connection string format. Expected: [username@]<server_ip>:<port>\n";
-        return 1;
-    }
-
-    attempt_connection(ip, port);
-
-    std::cout << "MiniDrive client stub (version " << minidrive::version() << ")" << std::endl;
-    std::cout << "Interactive shell and networking are not yet implemented." << std::endl;
     return 0;
 }
