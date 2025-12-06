@@ -3,6 +3,7 @@
 #include <string>
 #include "minidrive/version.hpp"
 #include <asio.hpp>
+#include <fstream>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -149,6 +150,90 @@ std::string create_json_command(const std::string& input) {
     return json_command.dump();
 }
 
+void log_debug(const std::string& message) {
+    std::cout << "[DEBUG] " << message << "\n";
+}
+
+void upload_file(asio::ip::tcp::socket& socket, const std::string& local_path, const std::string& remote_path) {
+    try {
+        log_debug("Preparing to upload file: " + local_path + " as " + remote_path);
+
+        // Create the JSON command
+        json command;
+        command["cmd"] = "UPLOAD";
+        command["args"]["filename"] = remote_path;
+
+        // Send the command to the server
+        asio::write(socket, asio::buffer(command.dump() + "\n"));
+        log_debug("Upload command sent: " + command.dump());
+
+        // Wait for the server's response
+        asio::streambuf buffer;
+        asio::read_until(socket, buffer, '\n');
+        std::istream response_stream(&buffer);
+        std::string response_message;
+        std::getline(response_stream, response_message);
+
+        // Parse the server's response
+        auto response = json::parse(response_message);
+        std::string status = response.at("status").get<std::string>();
+        log_debug("Server response status: " + status);
+
+        if (status != "ready") {
+            std::cerr << "Server is not ready: " << response.at("message").get<std::string>() << "\n";
+            log_debug("Server not ready message: " + response.at("message").get<std::string>());
+            return;
+        }
+
+        log_debug("Server is ready to receive the file.");
+
+        // Open the file for reading
+        std::ifstream input_file(local_path, std::ios::binary);
+        if (!input_file.is_open()) {
+            throw std::runtime_error("Failed to open file: " + local_path);
+        }
+
+        // Get the file size
+        input_file.seekg(0, std::ios::end);
+        size_t file_size = input_file.tellg();
+        input_file.seekg(0, std::ios::beg);
+
+        log_debug("File size: " + std::to_string(file_size));
+
+        // Send the file size to the server
+        asio::write(socket, asio::buffer(std::to_string(file_size) + "\n"));
+        log_debug("File size sent to server.");
+
+        // Send the file data
+        char buffer_data[1024];
+        size_t bytes_sent = 0;
+        while (bytes_sent < file_size) {
+            input_file.read(buffer_data, sizeof(buffer_data));
+            std::streamsize bytes_read = input_file.gcount();
+            asio::write(socket, asio::buffer(buffer_data, bytes_read));
+            bytes_sent += bytes_read;
+
+            log_debug("Sent " + std::to_string(bytes_sent) + " of " + std::to_string(file_size) + " bytes.");
+        }
+
+        input_file.close();
+        log_debug("File upload completed: " + local_path);
+
+        // Wait for the server's acknowledgment
+        asio::streambuf ack_buffer;
+        asio::read_until(socket, ack_buffer, '\n');
+        std::istream ack_stream(&ack_buffer);
+        std::string ack_message;
+        std::getline(ack_stream, ack_message);
+        auto ack_response = json::parse(ack_message);
+        log_debug("Server acknowledgment: " + ack_response.dump());
+        std::cout << "Server response: " << ack_response.dump() << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Error during file upload: " << e.what() << "\n";
+        log_debug("Error during upload: " + std::string(e.what()));
+    }
+}
+
 void interactive_shell(asio::ip::tcp::socket& socket) {
     std::cout << "Enter commands. Type 'exit' to quit.\n";
 
@@ -169,12 +254,32 @@ void interactive_shell(asio::ip::tcp::socket& socket) {
             }
 
             if (validate_command(input)) {
-                // Create JSON command
-                std::string json_command = create_json_command(input);
+                std::istringstream iss(input);
+                std::string command;
+                iss >> command;
 
-                // Send the JSON command to the server
-                asio::write(socket, asio::buffer(json_command + "\n"));
-                std::cout << "Command sent to server: " << json_command << "\n";
+                if (command == "UPLOAD") {
+                    std::string local_path, remote_path;
+                    iss >> local_path >> remote_path;
+
+                    if (local_path.empty()) {
+                        std::cerr << "UPLOAD command requires at least a local path.\n";
+                        continue;
+                    }
+
+                    if (remote_path.empty()) {
+                        remote_path = local_path; // Default to the same name on the server
+                    }
+
+                    upload_file(socket, local_path, remote_path);
+                } else {
+                    // Create JSON command for other commands
+                    std::string json_command = create_json_command(input);
+
+                    // Send the JSON command to the server
+                    asio::write(socket, asio::buffer(json_command + "\n"));
+                    std::cout << "Command sent to server: " << json_command << "\n";
+                }
             } else {
                 std::cout << "Invalid command or missing arguments.\n";
                 print_available_commands();
@@ -222,6 +327,8 @@ void attempt_connection(const std::string& arg) {
         std::cerr << "Failed to connect: " << e.what() << "\n";
     }
 }
+
+
 
 int main(int argc, char* argv[]) {
     try {

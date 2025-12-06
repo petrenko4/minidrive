@@ -3,6 +3,7 @@
 #include <string>
 #include <signal.h>
 #include <filesystem>
+#include <fstream>
 #include <nlohmann/json.hpp>
 
 #include "minidrive/version.hpp"
@@ -25,9 +26,111 @@ void create_user_directory(const std::string& root_path, const std::string& user
     }
 }
 
-void handle_client(asio::ip::tcp::socket &socket, const std::string& root_path) {
+bool send_response(asio::ip::tcp::socket& socket, const std::string& status, const std::string& message = "", int code = 0, const json& data = json::object()) {
     try {
-        std::cout << "Client connected: " << socket.remote_endpoint() << "\n";
+        json response;
+        response["status"] = status;
+        response["code"] = code;
+        response["message"] = message;
+        response["data"] = data;
+        asio::write(socket, asio::buffer(response.dump() + "\n"));
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to send response: " << e.what() << "\n";
+        return false;
+    }
+}
+
+void log_debug(const std::string& message) {
+    std::cout << "[DEBUG] " << message << "\n";
+}
+
+void handle_upload(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& args) {
+    try {
+        log_debug("Handling UPLOAD command");
+
+        // Extract file paths from the arguments
+        std::string filename = args.at("filename").get<std::string>();
+        std::string user_directory = root_path + "/" + username;
+        std::string file_path = user_directory + "/" + filename;
+
+        log_debug("Preparing to receive file: " + filename);
+
+        // Check if the server is ready to receive the file
+        if (!send_response(socket, "ready", "Server is ready to receive the file.")) {
+            log_debug("Failed to send ready response to client.");
+            return;
+        }
+
+        // Open the file for writing
+        std::ofstream output_file(file_path, std::ios::binary);
+        if (!output_file.is_open()) {
+            throw std::runtime_error("Failed to open file for writing: " + file_path);
+        }
+
+        log_debug("File opened for writing: " + file_path);
+
+        // Receive the file size
+        asio::streambuf buffer;
+        asio::read_until(socket, buffer, '\n');
+        std::istream input_stream(&buffer);
+        std::string file_size_str;
+        std::getline(input_stream, file_size_str);
+        size_t file_size = std::stoull(file_size_str);
+
+        log_debug("Expecting file size: " + std::to_string(file_size));
+
+        // Receive the file data
+        size_t bytes_received = 0;
+        while (bytes_received < file_size) {
+            char data[1024];
+            size_t len = socket.read_some(asio::buffer(data, std::min(file_size - bytes_received, sizeof(data))));
+            output_file.write(data, len);
+            bytes_received += len;
+
+            log_debug("Received " + std::to_string(bytes_received) + " of " + std::to_string(file_size) + " bytes.");
+        }
+
+        output_file.close();
+        log_debug("File received and saved to: " + file_path);
+
+        // Send acknowledgment to the client
+        send_response(socket, "success", "File uploaded successfully.");
+        log_debug("Acknowledgment sent to client.");
+    } catch (const std::exception& e) {
+        std::cerr << "Error handling upload: " << e.what() << "\n";
+        send_response(socket, "error", e.what());
+        log_debug("Error during upload: " + std::string(e.what()));
+    }
+}
+
+void handle_command(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& json_message) {
+    try {
+        // Extract the command and arguments
+        std::string command = json_message.at("cmd").get<std::string>();
+        auto args = json_message.value("args", json::object());
+
+        std::cout << "Command: " << command << "\n";
+        std::cout << "Arguments: " << args.dump() << "\n";
+
+        if (command == "UPLOAD") {
+            handle_upload(username, root_path, socket, args);
+        } else {
+            // Placeholder for other commands
+            send_response(socket, "success", "Command received: " + command);
+        }
+    } catch (const json::exception& e) {
+        std::cerr << "Invalid JSON command: " << e.what() << "\n";
+        send_response(socket, "error", "Invalid JSON command format.");
+    } catch (const std::exception& e) {
+        std::cerr << "Error handling command: " << e.what() << "\n";
+        send_response(socket, "error", e.what());
+    }
+}
+
+void handle_client(asio::ip::tcp::socket& socket, const std::string& root_path) {
+    try {
+        log_debug("New client connected: " + socket.remote_endpoint().address().to_string());
 
         // Read the username from the client
         asio::streambuf buffer;
@@ -37,18 +140,18 @@ void handle_client(asio::ip::tcp::socket &socket, const std::string& root_path) 
         std::getline(input_stream, username);
 
         if (username.empty()) {
-            std::cerr << "No username provided by client." << std::endl;
+            log_debug("No username provided by client.");
             return;
         }
 
-        std::cout << "Username received: " << username << "\n";
+        log_debug("Username received: " + username);
 
         // Create a directory for the user if it doesn't exist
         create_user_directory(root_path, username);
 
         // Send a welcome message to the client
-        std::string welcome_message = "Welcome, " + username + "!\n";
-        asio::write(socket, asio::buffer(welcome_message));
+        //send_response(socket, "success", "Welcome, " + username + "!");
+        log_debug("Welcome message sent to: " + username);
 
         while (true) {
             // Read a message from the client
@@ -61,33 +164,27 @@ void handle_client(asio::ip::tcp::socket &socket, const std::string& root_path) 
             std::getline(input_stream, message);
 
             if (message.empty()) {
+                log_debug("Empty message received, continuing.");
                 continue;
             }
 
-            std::cout << "Received: " << message << "\n";
+            log_debug("Received message: " + message);
 
             try {
                 // Parse the JSON message
                 auto json_message = json::parse(message);
 
-                // Extract the command and arguments
-                std::string command = json_message.at("cmd").get<std::string>();
-                auto args = json_message.value("args", json::object());
-
-                std::cout << "Command: " << command << "\n";
-                std::cout << "Arguments: " << args.dump() << "\n";
-
-                // Handle the command (placeholder for actual implementation)
-                std::string response = "Command received: " + command + "\n";
-                asio::write(socket, asio::buffer(response));
+                // Handle the command
+                handle_command(username, root_path, socket, json_message);
             } catch (const json::exception& e) {
                 std::cerr << "Invalid JSON received: " << e.what() << "\n";
-                std::string error_message = "Error: Invalid JSON format\n";
-                asio::write(socket, asio::buffer(error_message));
+                send_response(socket, "error", "Invalid JSON format.");
+                log_debug("Invalid JSON format: " + std::string(e.what()));
             }
         }
     } catch (const std::exception& e) {
         std::cerr << "Client disconnected or error: " << e.what() << "\n";
+        log_debug("Client disconnected or error: " + std::string(e.what()));
     }
 }
 
@@ -104,6 +201,7 @@ void run_server(const std::string& host, const std::string& port, std::string ro
 
             std::cout << "New connection from " << socket.remote_endpoint() << "\n";
 
+            // Handle the client connection
             handle_client(socket, root_path);
         }
     } catch (const std::exception& e) {
