@@ -104,6 +104,62 @@ void handle_upload(const std::string& username, const std::string& root_path, as
     }
 }
 
+void handle_list(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& args) {
+    try {
+        log_debug("Handling LIST command");
+        log_debug("Root path: " + root_path + ", Username: " + username);
+
+        // Determine the directory to list by appending the client's path to the user's directory
+        std::filesystem::path user_directory = std::filesystem::path(root_path) / username;
+        std::string path_arg = args.value("path", ".");
+        std::filesystem::path resolved_path = user_directory / path_arg;
+
+        // Normalize the resolved path
+        resolved_path = resolved_path.lexically_normal();
+        std::string path = resolved_path.string();
+
+        // Security check: ensure resolved path is under the user's directory
+        if (resolved_path.string().rfind(user_directory.string(), 0) != 0) {
+            send_response(socket, "error", "Access denied: path outside user directory.");
+            log_debug("Access denied to path: " + path);
+            return;
+        }
+
+        log_debug("Listing directory: " + path);
+
+        // Check if the directory exists
+        if (!std::filesystem::exists(path) || !std::filesystem::is_directory(path)) {
+            send_response(socket, "error", "Directory does not exist: " + path);
+            log_debug("Directory does not exist: " + path);
+            return;
+        }
+
+        // Collect directory entries
+        json data;
+        data["entries"] = json::array();
+        size_t total_entries = 0;
+
+        for (const auto& entry : std::filesystem::directory_iterator(path)) {
+            json file_info;
+            file_info["name"] = entry.path().filename().string();
+            file_info["type"] = entry.is_directory() ? "directory" : "file";
+            data["entries"].push_back(file_info);
+            ++total_entries;
+        }
+
+        // Add total entries count to the response
+        data["total_entries"] = total_entries;
+
+        // Send the response
+        send_response(socket, "OK", "Directory listed successfully.", 0, data);
+        log_debug("Directory listing sent successfully with " + std::to_string(total_entries) + " entries.");
+    } catch (const std::exception& e) {
+        std::cerr << "Error handling LIST command: " << e.what() << "\n";
+        send_response(socket, "error", e.what());
+        log_debug("Error during LIST command: " + std::string(e.what()));
+    }
+}
+
 void handle_command(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& json_message) {
     try {
         // Extract the command and arguments
@@ -115,6 +171,8 @@ void handle_command(const std::string& username, const std::string& root_path, a
 
         if (command == "UPLOAD") {
             handle_upload(username, root_path, socket, args);
+        } else if (command == "LIST") {
+            handle_list(username, root_path, socket, args);
         } else {
             // Placeholder for other commands
             send_response(socket, "success", "Command received: " + command);
@@ -188,7 +246,7 @@ void handle_client(asio::ip::tcp::socket& socket, const std::string& root_path) 
     }
 }
 
-void run_server(const std::string& host, const std::string& port, std::string root_path) {
+void run_server(const std::string& host, const std::string& port, std::string& root_path) {
     try {
         asio::io_context io_context;
 

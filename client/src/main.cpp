@@ -234,6 +234,53 @@ void upload_file(asio::ip::tcp::socket& socket, const std::string& local_path, c
     }
 }
 
+void process_list_command(asio::ip::tcp::socket& socket, const std::string& input) {
+    try {
+        // Create JSON command for LIST
+        std::string json_command = create_json_command(input);
+
+        // Send the JSON command to the server
+        asio::write(socket, asio::buffer(json_command + "\n"));
+        std::cout << "LIST command sent to server: " << json_command << "\n";
+
+        // Wait for the server's response
+        asio::streambuf buffer;
+        asio::read_until(socket, buffer, '\n');
+        std::istream response_stream(&buffer);
+        std::string response_message;
+        std::getline(response_stream, response_message);
+
+        // Parse the server's response
+        auto response = json::parse(response_message);
+        std::string status = response.at("status").get<std::string>();
+
+        if (status == "OK") {
+            auto data = response.value("data", json::object());
+            if (data.contains("entries")) {
+                auto entries = data.at("entries");
+                if (entries.is_array()) {
+                    std::cout << "Files and directories received from server:\n";
+                    for (const auto& entry : entries) {
+                        std::string name = entry.value("name", "<unknown>");
+                        std::string type = entry.value("type", "<unknown>");
+                        std::cout << "  [" << type << "] " << name << "\n";
+                    }
+                }
+            }
+
+            // Display total entries
+            if (data.contains("total_entries")) {
+                size_t total_entries = data.at("total_entries").get<size_t>();
+                std::cout << "Total entries: " << total_entries << "\n";
+            }
+        } else {
+            std::cerr << "Error from server: " << response.at("message").get<std::string>() << "\n";
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error processing LIST command: " << e.what() << "\n";
+    }
+}
+
 void interactive_shell(asio::ip::tcp::socket& socket) {
     std::cout << "Enter commands. Type 'exit' to quit.\n";
 
@@ -272,6 +319,8 @@ void interactive_shell(asio::ip::tcp::socket& socket) {
                     }
 
                     upload_file(socket, local_path, remote_path);
+                } else if (command == "LIST") {
+                    process_list_command(socket, input);
                 } else {
                     // Create JSON command for other commands
                     std::string json_command = create_json_command(input);
