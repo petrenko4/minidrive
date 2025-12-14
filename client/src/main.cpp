@@ -5,6 +5,7 @@
 #include <asio.hpp>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <filesystem>
 
 using json = nlohmann::json;
 
@@ -311,6 +312,83 @@ void process_delete_command(asio::ip::tcp::socket& socket, const std::string& in
     }
 }
 
+void process_download_command(asio::ip::tcp::socket& socket, const std::string& input) {
+    try {
+        // Parse the input to extract remote and local paths
+        std::istringstream iss(input);
+        std::string command, remote_path, local_path;
+        iss >> command >> remote_path >> local_path;
+
+        if (remote_path.empty()) {
+            std::cerr << "DOWNLOAD command requires at least a remote path.\n";
+            return;
+        }
+
+        if (local_path.empty()) {
+            // Default to the same name as the remote file
+            local_path = remote_path;
+        }
+
+        // Check if the local file already exists
+        if (std::filesystem::exists(local_path)) {
+            std::cerr << "File already exists: " << local_path << ". Please delete it or choose a different name.\n";
+            return;
+        }
+
+        // Try to open the local file for writing
+        std::ofstream output_file(local_path, std::ios::binary);
+        if (!output_file.is_open()) {
+            std::cerr << "Failed to open file for writing: " << local_path << "\n";
+            return;
+        }
+
+        // Create JSON command for DOWNLOAD
+        json json_command;
+        json_command["cmd"] = "DOWNLOAD";
+        json_command["args"]["remote_path"] = remote_path;
+
+        // Send the JSON command to the server
+        asio::write(socket, asio::buffer(json_command.dump() + "\n"));
+        std::cout << "DOWNLOAD command sent to server: " << json_command.dump() << "\n";
+
+        // Wait for the server's response
+        asio::streambuf buffer;
+        asio::read_until(socket, buffer, '\n');
+        std::istream response_stream(&buffer);
+        std::string response_message;
+        std::getline(response_stream, response_message);
+
+        // Parse the server's response
+        auto response = json::parse(response_message);
+        std::string status = response.at("status").get<std::string>();
+
+        if (status != "ready") {
+            std::cerr << "Error from server: " << response.at("message").get<std::string>() << "\n";
+            return;
+        }
+
+        // Get the file size from the server's response
+        size_t file_size = response.at("data").at("file_size").get<size_t>();
+        std::cout << "File size: " << file_size << " bytes.\n";
+
+        // Receive the file data
+        size_t bytes_received = 0;
+        char data[1024];
+        while (bytes_received < file_size) {
+            size_t len = socket.read_some(asio::buffer(data, sizeof(data)));
+            output_file.write(data, len);
+            bytes_received += len;
+
+            std::cout << "Received " << bytes_received << " of " << file_size << " bytes.\n";
+        }
+
+        output_file.close();
+        std::cout << "File downloaded successfully to: " << local_path << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Error processing DOWNLOAD command: " << e.what() << "\n";
+    }
+}
+
 void interactive_shell(asio::ip::tcp::socket& socket) {
     std::cout << "Enter commands. Type 'exit' to quit.\n";
 
@@ -353,6 +431,8 @@ void interactive_shell(asio::ip::tcp::socket& socket) {
                     process_list_command(socket, input);
                 } else if (command == "DELETE") {
                     process_delete_command(socket, input);
+                } else if (command == "DOWNLOAD") {
+                    process_download_command(socket, input);
                 } else {
                     // Create JSON command for other commands
                     std::string json_command = create_json_command(input);

@@ -54,6 +54,13 @@ void handle_upload(const std::string& username, const std::string& root_path, as
         std::string user_directory = root_path + "/" + username;
         std::string file_path = user_directory + "/" + filename;
 
+        // Check if the file already exists
+        if (std::filesystem::exists(file_path)) {
+            send_response(socket, "error", "File already exists: " + file_path);
+            log_debug("File already exists: " + file_path);
+            return;
+        }
+
         log_debug("Preparing to receive file: " + filename);
 
         // Check if the server is ready to receive the file
@@ -205,6 +212,81 @@ void handle_delete(const std::string& username, const std::string& root_path, as
     }
 }
 
+void handle_download(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& args) {
+    try {
+        log_debug("Handling DOWNLOAD command");
+
+        // Determine the file to download by appending the client's path to the user's directory
+        std::filesystem::path user_directory = std::filesystem::path(root_path) / username;
+        std::string file_arg = args.value("remote_path", "");
+        std::filesystem::path resolved_path = user_directory / file_arg;
+
+        // Normalize the resolved path
+        resolved_path = resolved_path.lexically_normal();
+        std::string path = resolved_path.string();
+
+        // Security check: ensure resolved path is under the user's directory
+        if (resolved_path.string().rfind(user_directory.string(), 0) != 0) {
+            send_response(socket, "error", "Access denied: path outside user directory.");
+            log_debug("Access denied to path: " + path);
+            return;
+        }
+
+        log_debug("Preparing to send file: " + path);
+
+        // Check if the file exists
+        if (!std::filesystem::exists(path)) {
+            send_response(socket, "error", "File does not exist: " + path);
+            log_debug("File does not exist: " + path);
+            return;
+        }
+
+        // Check if the path is a regular file
+        if (!std::filesystem::is_regular_file(path)) {
+            send_response(socket, "error", "Path is not a file: " + path);
+            log_debug("Path is not a file: " + path);
+            return;
+        }
+
+        // Open the file for reading
+        std::ifstream input_file(path, std::ios::binary);
+        if (!input_file.is_open()) {
+            send_response(socket, "error", "Failed to open file: " + path);
+            log_debug("Failed to open file: " + path);
+            return;
+        }
+
+        // Get the file size
+        input_file.seekg(0, std::ios::end);
+        size_t file_size = input_file.tellg();
+        input_file.seekg(0, std::ios::beg);
+
+        log_debug("File size: " + std::to_string(file_size));
+
+        // Send the file size to the client
+        send_response(socket, "ready", "File is ready to be downloaded.", 0, { {"file_size", file_size} });
+
+        // Send the file data
+        char buffer[1024];
+        size_t bytes_sent = 0;
+        while (bytes_sent < file_size) {
+            input_file.read(buffer, sizeof(buffer));
+            std::streamsize bytes_read = input_file.gcount();
+            asio::write(socket, asio::buffer(buffer, bytes_read));
+            bytes_sent += bytes_read;
+
+            log_debug("Sent " + std::to_string(bytes_sent) + " of " + std::to_string(file_size) + " bytes.");
+        }
+
+        input_file.close();
+        log_debug("File sent successfully: " + path);
+    } catch (const std::exception& e) {
+        std::cerr << "Error handling DOWNLOAD command: " << e.what() << "\n";
+        send_response(socket, "error", e.what());
+        log_debug("Error during DOWNLOAD command: " + std::string(e.what()));
+    }
+}
+
 void handle_command(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& json_message) {
     try {
         // Extract the command and arguments
@@ -220,6 +302,8 @@ void handle_command(const std::string& username, const std::string& root_path, a
             handle_list(username, root_path, socket, args);
         } else if (command == "DELETE") {
             handle_delete(username, root_path, socket, args);
+        } else if (command == "DOWNLOAD") {
+            handle_download(username, root_path, socket, args);
         } else {
             // Placeholder for other commands
             send_response(socket, "success", "Command received: " + command);
