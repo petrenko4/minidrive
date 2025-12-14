@@ -281,6 +281,36 @@ void process_list_command(asio::ip::tcp::socket& socket, const std::string& inpu
     }
 }
 
+void process_delete_command(asio::ip::tcp::socket& socket, const std::string& input) {
+    try {
+        // Create JSON command for DELETE
+        std::string json_command = create_json_command(input);
+
+        // Send the JSON command to the server
+        asio::write(socket, asio::buffer(json_command + "\n"));
+        std::cout << "DELETE command sent to server: " << json_command << "\n";
+
+        // Wait for the server's response
+        asio::streambuf buffer;
+        asio::read_until(socket, buffer, '\n');
+        std::istream response_stream(&buffer);
+        std::string response_message;
+        std::getline(response_stream, response_message);
+
+        // Parse the server's response
+        auto response = json::parse(response_message);
+        std::string status = response.at("status").get<std::string>();
+
+        if (status == "OK") {
+            std::cout << "File deleted successfully.\n";
+        } else {
+            std::cerr << "Error from server: " << response.at("message").get<std::string>() << "\n";
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error processing DELETE command: " << e.what() << "\n";
+    }
+}
+
 void interactive_shell(asio::ip::tcp::socket& socket) {
     std::cout << "Enter commands. Type 'exit' to quit.\n";
 
@@ -321,6 +351,8 @@ void interactive_shell(asio::ip::tcp::socket& socket) {
                     upload_file(socket, local_path, remote_path);
                 } else if (command == "LIST") {
                     process_list_command(socket, input);
+                } else if (command == "DELETE") {
+                    process_delete_command(socket, input);
                 } else {
                     // Create JSON command for other commands
                     std::string json_command = create_json_command(input);

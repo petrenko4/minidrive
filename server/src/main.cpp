@@ -160,6 +160,51 @@ void handle_list(const std::string& username, const std::string& root_path, asio
     }
 }
 
+void handle_delete(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& args) {
+    try {
+        log_debug("Handling DELETE command");
+
+        // Determine the file to delete by appending the client's path to the user's directory
+        std::filesystem::path user_directory = std::filesystem::path(root_path) / username;
+        std::string file_arg = args.value("path", "");
+        std::filesystem::path resolved_path = user_directory / file_arg;
+
+        // Normalize the resolved path
+        resolved_path = resolved_path.lexically_normal();
+        std::string path = resolved_path.string();
+
+        // Security check: ensure resolved path is under the user's directory
+        if (resolved_path.string().rfind(user_directory.string(), 0) != 0) {
+            send_response(socket, "error", "Access denied: path outside user directory.");
+            log_debug("Access denied to path: " + path);
+            return;
+        }
+
+        log_debug("Deleting file: " + path);
+
+        // Check if the file exists
+        if (!std::filesystem::exists(path)) {
+            send_response(socket, "error", "File does not exist: " + path);
+            log_debug("File does not exist: " + path);
+            return;
+        }
+
+        // Attempt to delete the file
+        if (std::filesystem::is_regular_file(path)) {
+            std::filesystem::remove(path);
+            send_response(socket, "OK", "File deleted successfully.");
+            log_debug("File deleted successfully: " + path);
+        } else {
+            send_response(socket, "error", "Path is not a file: " + path);
+            log_debug("Path is not a file: " + path);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error handling DELETE command: " << e.what() << "\n";
+        send_response(socket, "error", e.what());
+        log_debug("Error during DELETE command: " + std::string(e.what()));
+    }
+}
+
 void handle_command(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& json_message) {
     try {
         // Extract the command and arguments
@@ -173,6 +218,8 @@ void handle_command(const std::string& username, const std::string& root_path, a
             handle_upload(username, root_path, socket, args);
         } else if (command == "LIST") {
             handle_list(username, root_path, socket, args);
+        } else if (command == "DELETE") {
+            handle_delete(username, root_path, socket, args);
         } else {
             // Placeholder for other commands
             send_response(socket, "success", "Command received: " + command);
