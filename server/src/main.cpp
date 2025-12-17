@@ -424,6 +424,55 @@ void handle_mkdir(const std::string& username, const std::string& root_path, asi
     }
 }
 
+void handle_rmdir(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& args) {
+    try {
+        log_debug("Handling RMDIR command");
+
+        // Determine the user's current path
+        std::filesystem::path user_directory = std::filesystem::path(root_path) / username;
+
+        // Initialize the user's current path if not already set
+        if (user_current_paths.find(username) == user_current_paths.end()) {
+            user_current_paths[username] = user_directory;
+        }
+
+        std::filesystem::path current_path = user_current_paths[username];
+        std::string dir_arg = args.value("path", "");
+        std::filesystem::path resolved_path = current_path / dir_arg;
+
+        // Normalize the resolved path
+        resolved_path = resolved_path.lexically_normal();
+        std::string path = resolved_path.string();
+
+        // Security check: ensure resolved path is under the user's directory
+        if (resolved_path.string().rfind(user_directory.string(), 0) != 0) {
+            send_response(socket, "error", "Access denied: path outside user directory.");
+            log_debug("Access denied to path: " + path);
+            return;
+        }
+
+        log_debug("Removing directory: " + path);
+
+        // Check if the directory exists
+        if (!std::filesystem::exists(path)) {
+            send_response(socket, "error", "Directory does not exist: " + path);
+            log_debug("Directory does not exist: " + path);
+            return;
+        }
+
+        // Attempt to remove the directory recursively
+        std::filesystem::remove_all(path);
+
+        // Send success response
+        send_response(socket, "OK", "Directory removed successfully.");
+        log_debug("Directory removed successfully: " + path);
+    } catch (const std::exception& e) {
+        std::cerr << "Error handling RMDIR command: " << e.what() << "\n";
+        send_response(socket, "error", e.what());
+        log_debug("Error during RMDIR command: " + std::string(e.what()));
+    }
+}
+
 void handle_command(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& json_message) {
     try {
         // Extract the command and arguments
@@ -445,6 +494,8 @@ void handle_command(const std::string& username, const std::string& root_path, a
             handle_cd(username, root_path, socket, args);
         } else if (command == "MKDIR") {
             handle_mkdir(username, root_path, socket, args);
+        } else if (command == "RMDIR") {
+            handle_rmdir(username, root_path, socket, args);
         } else {
             // Placeholder for other commands
             send_response(socket, "success", "Command received: " + command);
