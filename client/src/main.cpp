@@ -432,6 +432,43 @@ void process_cd_command(asio::ip::tcp::socket& socket, const std::string& input)
     }
 }
 
+void process_mkdir_command(asio::ip::tcp::socket& socket, const std::string& input) {
+    // Parse the input to extract the path
+    std::istringstream iss(input);
+    std::string command, path;
+    iss >> command >> path;
+
+    if (path.empty()) {
+        std::cerr << "MKDIR command requires a path.\n";
+        return;
+    }
+
+    // Create JSON command for MKDIR
+    json json_command;
+    json_command["cmd"] = "MKDIR";
+    json_command["args"]["path"] = path;
+
+    // Send the command to the server
+    asio::write(socket, asio::buffer(json_command.dump() + "\n"));
+
+    // Wait for the server's response
+    asio::streambuf buffer;
+    asio::read_until(socket, buffer, '\n');
+    std::istream response_stream(&buffer);
+    std::string response_message;
+    std::getline(response_stream, response_message);
+
+    // Parse the server's response
+    auto response = json::parse(response_message);
+    std::string status = response.at("status").get<std::string>();
+
+    if (status == "OK") {
+        std::cout << "Directory created successfully.\n";
+    } else {
+        std::cerr << "Failed to create directory: " << response.at("message").get<std::string>() << "\n";
+    }
+}
+
 void interactive_shell(asio::ip::tcp::socket& socket) {
     std::cout << "Enter commands. Type 'exit' to quit.\n";
 
@@ -478,6 +515,8 @@ void interactive_shell(asio::ip::tcp::socket& socket) {
                     process_download_command(socket, input);
                 } else if (command == "CD") {
                     process_cd_command(socket, input);
+                } else if (command == "MKDIR") {
+                    process_mkdir_command(socket, input);
                 } else {
                     // Create JSON command for other commands
                     std::string json_command = create_json_command(input);

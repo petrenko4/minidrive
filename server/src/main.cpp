@@ -53,10 +53,28 @@ void handle_upload(const std::string& username, const std::string& root_path, as
     try {
         log_debug("Handling UPLOAD command");
 
-        // Extract file paths from the arguments
+        // Determine the user's current path
+        std::filesystem::path user_directory = std::filesystem::path(root_path) / username;
+
+        // Initialize the user's current path if not already set
+        if (user_current_paths.find(username) == user_current_paths.end()) {
+            user_current_paths[username] = user_directory;
+        }
+
+        std::filesystem::path current_path = user_current_paths[username];
         std::string filename = args.at("filename").get<std::string>();
-        std::string user_directory = root_path + "/" + username;
-        std::string file_path = user_directory + "/" + filename;
+        std::filesystem::path resolved_path = current_path / filename;
+
+        // Normalize the resolved path
+        resolved_path = resolved_path.lexically_normal();
+        std::string file_path = resolved_path.string();
+
+        // Security check: ensure resolved path is under the user's directory
+        if (resolved_path.string().rfind(user_directory.string(), 0) != 0) {
+            send_response(socket, "error", "Access denied: path outside user directory.");
+            log_debug("Access denied to path: " + file_path);
+            return;
+        }
 
         // Check if the file already exists
         if (std::filesystem::exists(file_path)) {
@@ -65,13 +83,7 @@ void handle_upload(const std::string& username, const std::string& root_path, as
             return;
         }
 
-        log_debug("Preparing to receive file: " + filename);
-
-        // Check if the server is ready to receive the file
-        if (!send_response(socket, "ready", "Server is ready to receive the file.")) {
-            log_debug("Failed to send ready response to client.");
-            return;
-        }
+        log_debug("Preparing to receive file: " + file_path);
 
         // Open the file for writing
         std::ofstream output_file(file_path, std::ios::binary);
@@ -80,6 +92,12 @@ void handle_upload(const std::string& username, const std::string& root_path, as
         }
 
         log_debug("File opened for writing: " + file_path);
+
+        // Check if the server is ready to receive the file
+        if (!send_response(socket, "ready", "Server is ready to receive the file.")) {
+            log_debug("Failed to send ready response to client.");
+            return;
+        }
 
         // Receive the file size
         asio::streambuf buffer;
@@ -357,6 +375,55 @@ void handle_cd(const std::string& username, const std::string& root_path, asio::
     }
 }
 
+void handle_mkdir(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& args) {
+    try {
+        log_debug("Handling MKDIR command");
+
+        // Determine the user's current path
+        std::filesystem::path user_directory = std::filesystem::path(root_path) / username;
+
+        // Initialize the user's current path if not already set
+        if (user_current_paths.find(username) == user_current_paths.end()) {
+            user_current_paths[username] = user_directory;
+        }
+
+        std::filesystem::path current_path = user_current_paths[username];
+        std::string dir_arg = args.value("path", "");
+        std::filesystem::path resolved_path = current_path / dir_arg;
+
+        // Normalize the resolved path
+        resolved_path = resolved_path.lexically_normal();
+        std::string path = resolved_path.string();
+
+        // Security check: ensure resolved path is under the user's directory
+        if (resolved_path.string().rfind(user_directory.string(), 0) != 0) {
+            send_response(socket, "error", "Access denied: path outside user directory.");
+            log_debug("Access denied to path: " + path);
+            return;
+        }
+
+        log_debug("Creating directory: " + path);
+
+        // Check if the directory already exists
+        if (std::filesystem::exists(path)) {
+            send_response(socket, "error", "Directory already exists: " + path);
+            log_debug("Directory already exists: " + path);
+            return;
+        }
+
+        // Attempt to create the directory
+        std::filesystem::create_directories(path);
+
+        // Send success response
+        send_response(socket, "OK", "Directory created successfully.");
+        log_debug("Directory created successfully: " + path);
+    } catch (const std::exception& e) {
+        std::cerr << "Error handling MKDIR command: " << e.what() << "\n";
+        send_response(socket, "error", e.what());
+        log_debug("Error during MKDIR command: " + std::string(e.what()));
+    }
+}
+
 void handle_command(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& json_message) {
     try {
         // Extract the command and arguments
@@ -376,6 +443,8 @@ void handle_command(const std::string& username, const std::string& root_path, a
             handle_download(username, root_path, socket, args);
         } else if (command == "CD") {
             handle_cd(username, root_path, socket, args);
+        } else if (command == "MKDIR") {
+            handle_mkdir(username, root_path, socket, args);
         } else {
             // Placeholder for other commands
             send_response(socket, "success", "Command received: " + command);
