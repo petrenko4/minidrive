@@ -203,10 +203,17 @@ void handle_delete(const std::string& username, const std::string& root_path, as
     try {
         log_debug("Handling DELETE command");
 
-        // Determine the file to delete by appending the client's path to the user's directory
+        // Determine the user's current path
         std::filesystem::path user_directory = std::filesystem::path(root_path) / username;
+
+        // Initialize the user's current path if not already set
+        if (user_current_paths.find(username) == user_current_paths.end()) {
+            user_current_paths[username] = user_directory;
+        }
+
+        std::filesystem::path current_path = user_current_paths[username];
         std::string file_arg = args.value("path", "");
-        std::filesystem::path resolved_path = user_directory / file_arg;
+        std::filesystem::path resolved_path = current_path / file_arg;
 
         // Normalize the resolved path
         resolved_path = resolved_path.lexically_normal();
@@ -525,6 +532,62 @@ void handle_move(const std::string& username, const std::string& root_path, asio
     }
 }
 
+void handle_copy(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& args) {
+    try {
+        log_debug("Handling COPY command");
+
+        // Determine the user's current path
+        std::filesystem::path user_directory = std::filesystem::path(root_path) / username;
+
+        // Initialize the user's current path if not already set
+        if (user_current_paths.find(username) == user_current_paths.end()) {
+            user_current_paths[username] = user_directory;
+        }
+
+        std::filesystem::path current_path = user_current_paths[username];
+        std::string src_arg = args.value("src", "");
+        std::string dst_arg = args.value("dst", "");
+        std::filesystem::path src_path = current_path / src_arg;
+        std::filesystem::path dst_path = current_path / dst_arg;
+
+        // Normalize the paths
+        src_path = src_path.lexically_normal();
+        dst_path = dst_path.lexically_normal();
+
+        // Security check: ensure both paths are under the user's directory
+        if (src_path.string().rfind(user_directory.string(), 0) != 0 ||
+            dst_path.string().rfind(user_directory.string(), 0) != 0) {
+            send_response(socket, "error", "Access denied: paths outside user directory.");
+            log_debug("Access denied to paths: " + src_path.string() + " or " + dst_path.string());
+            return;
+        }
+
+        log_debug("Copying from: " + src_path.string() + " to: " + dst_path.string());
+
+        // Check if the source exists
+        if (!std::filesystem::exists(src_path)) {
+            send_response(socket, "error", "Source does not exist: " + src_path.string());
+            log_debug("Source does not exist: " + src_path.string());
+            return;
+        }
+
+        // Attempt to copy the file or directory
+        if (std::filesystem::is_directory(src_path)) {
+            std::filesystem::copy(src_path, dst_path, std::filesystem::copy_options::recursive);
+        } else {
+            std::filesystem::copy(src_path, dst_path);
+        }
+
+        // Send success response
+        send_response(socket, "OK", "File or folder copied successfully.");
+        log_debug("File or folder copied successfully from: " + src_path.string() + " to: " + dst_path.string());
+    } catch (const std::exception& e) {
+        std::cerr << "Error handling COPY command: " << e.what() << "\n";
+        send_response(socket, "error", e.what());
+        log_debug("Error during COPY command: " + std::string(e.what()));
+    }
+}
+
 void handle_command(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& json_message) {
     try {
         // Extract the command and arguments
@@ -550,6 +613,8 @@ void handle_command(const std::string& username, const std::string& root_path, a
             handle_rmdir(username, root_path, socket, args);
         } else if (command == "MOVE") {
             handle_move(username, root_path, socket, args);
+        } else if (command == "COPY") {
+            handle_copy(username, root_path, socket, args);
         } else {
             // Placeholder for other commands
             send_response(socket, "success", "Command received: " + command);
