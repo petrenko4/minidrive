@@ -6,6 +6,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <filesystem>
+#include "minidrive/fnv1a_hash.hpp"
 
 using json = nlohmann::json;
 
@@ -13,6 +14,8 @@ bool parse_arguments(int argc, char* argv[], std::string& connection, std::strin
     if (argc < 2 || argc > 4) {
         std::cerr << "Usage: " << argv[0] << " [username@]<server_ip>:<port> [--log <log_file>]\n";
         return false;
+    
+
     }
 
     connection = argv[1];
@@ -30,7 +33,7 @@ bool parse_arguments(int argc, char* argv[], std::string& connection, std::strin
 }
 
 bool parse_connection_string(const std::string& connection, std::string& ip, std::string& port) {
-    std::regex pattern(R"((?:[^@]+@)?([^:]+):(\d+))");
+    std::regex pattern(R"((?:[^@]+@)?([^:]+):(\d+))"); // Reverted regex to original
     std::smatch matches;
 
     if (std::regex_match(connection, matches, pattern)) {
@@ -104,6 +107,9 @@ bool validate_command(const std::string& input) {
             return true;
         }
         return false;
+    } else if (command == "SYNC") {
+        // SYNC requires no arguments
+        return true;
     } else if (command == "HELP" || command == "EXIT") {
         // HELP and EXIT require no arguments
         return true;
@@ -582,6 +588,189 @@ void process_copy_command(asio::ip::tcp::socket& socket, const std::string& inpu
     }
 }
 
+void process_sync_command(asio::ip::tcp::socket& socket, const std::string& local_root) {
+    try {
+        log_debug("Sending SYNC command to server");
+
+        // Create and send the SYNC command
+        json sync_command;
+        sync_command["cmd"] = "SYNC";
+        asio::write(socket, asio::buffer(sync_command.dump() + "\n"));
+
+        // Wait for the server's response
+        asio::streambuf buffer;
+        asio::read_until(socket, buffer, '\n');
+        std::istream response_stream(&buffer);
+        std::string response_message;
+        std::getline(response_stream, response_message);
+
+        // Parse the server's response
+        auto response = json::parse(response_message);
+        std::string status = response.at("status").get<std::string>();
+
+        if (status != "OK") {
+            std::cerr << "SYNC command failed: " << response.at("message").get<std::string>() << "\n";
+            return;
+        }
+
+        log_debug("SYNC command successful. Comparing file trees.");
+
+        // Get the server file tree
+        std::unordered_map<std::string, FileInfo> server_files;
+        for (const auto& [path, info] : response.at("data").items()) {
+            uint64_t hash = info.value("hash", 0);
+            std::string type = info.value("type", "unknown");
+            server_files[path] = FileInfo(hash, type);
+        }
+
+        // Pretty-print server file tree
+        log_debug("Server file tree:");
+        for (const auto& [path, info] : server_files) {
+            log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
+        }
+
+        // Build the local file tree
+        std::unordered_map<std::string, FileInfo> local_files;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(local_root)) {
+            std::string relative_path = std::filesystem::relative(entry.path(), local_root).string();
+
+            if (entry.is_regular_file()) {
+                uint64_t file_hash = hash_file(entry.path().string());
+                local_files[relative_path] = FileInfo(file_hash, "file");
+            } else if (entry.is_directory()) {
+                local_files[relative_path] = FileInfo(0, "directory");
+            }
+        }
+
+        // Pretty-print local file tree
+        log_debug("Local file tree:");
+        for (const auto& [path, info] : local_files) {
+            log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
+        }
+
+        // Compare server and local files
+        for (auto it = server_files.begin(); it != server_files.end();) {
+            const std::string& server_path = it->first;
+            const FileInfo& server_info = it->second;
+
+            auto local_it = local_files.find(server_path);
+            if (local_it != local_files.end()) {
+                const FileInfo& local_info = local_it->second;
+
+                if (server_info.type == "file" && local_info.hash == server_info.hash) {
+                    // Same file, remove from both maps
+                    local_files.erase(local_it);
+                    it = server_files.erase(it);
+                    continue;
+                }
+            }
+
+            ++it; // Move to the next server file
+        }
+
+        // Debug: Print remaining server files
+        log_debug("Remaining server files after comparison:");
+        for (const auto& [path, info] : server_files) {
+            log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
+        }
+
+        // Debug: Print remaining local files
+        log_debug("Remaining local files after comparison:");
+        for (const auto& [path, info] : local_files) {
+            log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
+        }
+
+        // Handle files in local_files (upload to server)
+        for (const auto& [local_path, local_info] : local_files) {
+            if (local_info.type == "file") {
+                log_debug("Uploading new file: " + local_path);
+
+                // Ensure the directory structure exists on the server
+                std::filesystem::path parent_path = std::filesystem::path(local_path).parent_path();
+                if (!parent_path.empty()) {
+                    json mkdir_command;
+                    mkdir_command["cmd"] = "MKDIR";
+                    mkdir_command["args"]["path"] = parent_path.string();
+                    asio::write(socket, asio::buffer(mkdir_command.dump() + "\n"));
+
+                    // Check server response for MKDIR
+                    asio::streambuf mkdir_buffer;
+                    asio::read_until(socket, mkdir_buffer, '\n');
+                    std::istream mkdir_response_stream(&mkdir_buffer);
+                    std::string mkdir_response_message;
+                    std::getline(mkdir_response_stream, mkdir_response_message);
+                    auto mkdir_response = json::parse(mkdir_response_message);
+                    if (mkdir_response.at("status").get<std::string>() != "OK") {
+                        throw std::runtime_error("MKDIR command failed: " + mkdir_response.at("message").get<std::string>());
+                    }
+                }
+
+                // Send the upload command
+                json upload_command;
+                upload_command["cmd"] = "UPLOAD";
+                upload_command["args"]["local_path"] = local_root + "/" + local_path;
+                upload_command["args"]["remote_path"] = local_path;
+                asio::write(socket, asio::buffer(upload_command.dump() + "\n"));
+
+                // Check server response for UPLOAD
+                asio::streambuf upload_buffer;
+                asio::read_until(socket, upload_buffer, '\n');
+                std::istream upload_response_stream(&upload_buffer);
+                std::string upload_response_message;
+                std::getline(upload_response_stream, upload_response_message);
+                auto upload_response = json::parse(upload_response_message);
+                if (upload_response.at("status").get<std::string>() != "OK") {
+                    throw std::runtime_error("UPLOAD command failed: " + upload_response.at("message").get<std::string>());
+                }
+            }
+        }
+
+        // Handle files in server_files (delete from server)
+        for (const auto& [server_path, server_info] : server_files) {
+            if (server_info.type == "file") {
+                log_debug("Deleting server file: " + server_path);
+                json delete_command;
+                delete_command["cmd"] = "DELETE";
+                delete_command["args"]["path"] = server_path;
+                asio::write(socket, asio::buffer(delete_command.dump() + "\n"));
+
+                // Check server response for DELETE
+                asio::streambuf delete_buffer;
+                asio::read_until(socket, delete_buffer, '\n');
+                std::istream delete_response_stream(&delete_buffer);
+                std::string delete_response_message;
+                std::getline(delete_response_stream, delete_response_message);
+                auto delete_response = json::parse(delete_response_message);
+                if (delete_response.at("status").get<std::string>() != "OK") {
+                    throw std::runtime_error("DELETE command failed: " + delete_response.at("message").get<std::string>());
+                }
+            } else if (server_info.type == "directory") {
+                log_debug("Deleting server directory: " + server_path);
+                json rmdir_command;
+                rmdir_command["cmd"] = "RMDIR";
+                rmdir_command["args"]["path"] = server_path;
+                asio::write(socket, asio::buffer(rmdir_command.dump() + "\n"));
+
+                // Check server response for RMDIR
+                asio::streambuf rmdir_buffer;
+                asio::read_until(socket, rmdir_buffer, '\n');
+                std::istream rmdir_response_stream(&rmdir_buffer);
+                std::string rmdir_response_message;
+                std::getline(rmdir_response_stream, rmdir_response_message);
+                auto rmdir_response = json::parse(rmdir_response_message);
+                if (rmdir_response.at("status").get<std::string>() != "OK") {
+                    throw std::runtime_error("RMDIR command failed: " + rmdir_response.at("message").get<std::string>());
+                }
+            }
+        }
+
+        log_debug("Synchronization complete.");
+    } catch (const std::exception& e) {
+        std::cerr << "Error processing SYNC command: " << e.what() << "\n";
+        log_debug("Error during SYNC command: " + std::string(e.what()));
+    }
+}
+
 void interactive_shell(asio::ip::tcp::socket& socket) {
     std::cout << "Enter commands. Type 'exit' to quit.\n";
 
@@ -636,6 +825,8 @@ void interactive_shell(asio::ip::tcp::socket& socket) {
                     process_move_command(socket, input);
                 } else if (command == "COPY") {
                     process_copy_command(socket, input);
+                } else if (command == "SYNC") {
+                    process_sync_command(socket, "./mydata");
                 } else {
                     // Create JSON command for other commands
                     std::string json_command = create_json_command(input);
@@ -656,22 +847,92 @@ void interactive_shell(asio::ip::tcp::socket& socket) {
 }
 
 std::tuple<std::string, std::string, std::string> parse_client_arguments(const std::string& arg) {
-    std::regex pattern(R"((\w+)@([\d\.]+):(\d+))");
+    std::regex pattern(R"((\w+)?@?([\d\.]+):(\d+))");
     std::smatch match;
 
     if (std::regex_match(arg, match, pattern) && match.size() == 4) {
-        std::string username = match[1];
-        std::string ip = match[2];
-        std::string port = match[3];
+        std::string username = match[1].matched ? match[1].str() : ""; // Default to empty string if username is not provided
+        std::string ip = match[2].str();
+        std::string port = match[3].str();
         return {username, ip, port};
     }
 
-    throw std::invalid_argument("Invalid argument format. Expected: username@<server_ip>:<port>");
+    throw std::invalid_argument("Invalid argument format. Expected: [username@]<server_ip>:<port>");
+}
+
+void handle_authentication(asio::ip::tcp::socket& socket, const std::string& username) {
+    try {
+
+        std::cout << "Authenticating as user: " << username << std::endl;
+
+        std::string password = "322";
+        if (username != "public") {
+            std::cout << "Enter the password: ";
+            std::getline(std::cin, password);
+        }
+
+        // Send authentication request to the server
+        json auth_request;
+        auth_request["username"] = username;
+        auth_request["password"] = password;
+        asio::write(socket, asio::buffer(auth_request.dump() + "\n"));
+
+        std::cout << "[DEBUG] Sending authentication request for user: " << username << std::endl;
+
+        // Wait for the server's response
+        asio::streambuf buffer;
+        asio::read_until(socket, buffer, '\n');
+        std::istream response_stream(&buffer);
+        std::string response_message;
+        std::getline(response_stream, response_message);
+
+        std::cout << "[DEBUG] Server response: " << response_message << std::endl;
+
+        auto response = json::parse(response_message);
+        std::string status = response.at("status").get<std::string>();
+
+        if (status == "OK") {
+            std::cout << "Authentication successful." << std::endl;
+        } else if (status == "NEW_USER") {
+            std::cout << "User not found. Creating a new account." << std::endl;
+
+            // Prompt user for a new password
+            std::cout << "Enter a new password: ";
+            std::getline(std::cin, password);
+
+            // Send new account creation request
+            json new_user_request;
+            new_user_request["password"] = password;
+            asio::write(socket, asio::buffer(new_user_request.dump() + "\n"));
+
+            // Wait for the server's response
+            asio::streambuf new_user_buffer;
+            asio::read_until(socket, new_user_buffer, '\n');
+            std::istream new_user_response_stream(&new_user_buffer);
+            std::string new_user_response_message;
+            std::getline(new_user_response_stream, new_user_response_message);
+
+            auto new_user_response = json::parse(new_user_response_message);
+            if (new_user_response.at("status").get<std::string>() == "OK") {
+                std::cout << "Account created successfully." << std::endl;
+            } else {
+                std::cerr << "Failed to create account: " << new_user_response.at("message").get<std::string>() << std::endl;
+                exit(EXIT_FAILURE); // Exit if account creation fails
+            }
+        } else {
+            std::cerr << "Authentication failed: " << response.at("message").get<std::string>() << std::endl;
+            exit(EXIT_FAILURE); // Exit if authentication fails
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error during authentication: " << e.what() << std::endl;
+    }
 }
 
 void attempt_connection(const std::string& arg) {
     try {
         auto [username, ip, port] = parse_client_arguments(arg);
+
+        
 
         asio::io_context io_context;
         asio::ip::tcp::resolver resolver(io_context);
@@ -680,10 +941,14 @@ void attempt_connection(const std::string& arg) {
         asio::ip::tcp::socket socket(io_context);
         asio::connect(socket, endpoints);
 
+        std::string effective_username = username.empty() ? "public" : username;
+        
         // Send the username to the server
-        asio::write(socket, asio::buffer(username + "\n"));
+        asio::write(socket, asio::buffer(effective_username + "\n"));
 
-        std::cout << "Successfully connected to " << ip << ":" << port << " as user " << username << "\n";
+        std::cout << "Successfully connected to " << ip << ":" << port << " as user " << effective_username << "\n";
+        // Handle authentication
+        handle_authentication(socket, effective_username);
 
         // Start the interactive shell
         interactive_shell(socket);
@@ -691,8 +956,6 @@ void attempt_connection(const std::string& arg) {
         std::cerr << "Failed to connect: " << e.what() << "\n";
     }
 }
-
-
 
 int main(int argc, char* argv[]) {
     try {

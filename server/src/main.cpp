@@ -6,8 +6,11 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <unordered_map>
+#include <openssl/sha.h>
+#include <sodium.h>
 
 #include "minidrive/version.hpp"
+#include "minidrive/fnv1a_hash.hpp"
 
 using json = nlohmann::json;
 
@@ -588,6 +591,162 @@ void handle_copy(const std::string& username, const std::string& root_path, asio
     }
 }
 
+void handle_sync(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket) {
+    try {
+        log_debug("Handling SYNC command");
+
+        // Determine the user's root directory
+        std::filesystem::path user_directory = std::filesystem::path(root_path) / username;
+
+        // Initialize the unordered map to store file information
+        std::unordered_map<std::string, FileInfo> server_files;
+
+        // Recursively iterate over all files and directories in the user's directory
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(user_directory)) {
+            std::string relative_path = std::filesystem::relative(entry.path(), user_directory).string();
+
+            if (entry.is_regular_file()) {
+                // Calculate the hash for regular files
+                uint64_t file_hash = hash_file(entry.path().string());
+                server_files[relative_path] = FileInfo(file_hash, "file");
+            } else if (entry.is_directory()) {
+                // Add directories with a default hash value
+                server_files[relative_path] = FileInfo(0, "directory");
+            }
+        }
+
+        // Convert the unordered_map to JSON
+        json response_data;
+        for (const auto& [path, file_info] : server_files) {
+            response_data[path] = { {"hash", file_info.hash}, {"type", file_info.type} };
+        }
+
+        // Send the response to the client
+        send_response(socket, "OK", "Server file list", 0, response_data);
+        log_debug("SYNC command processed successfully. File list sent to client.");
+    } catch (const std::exception& e) {
+        std::cerr << "Error handling SYNC command: " << e.what() << "\n";
+        send_response(socket, "error", e.what());
+        log_debug("Error during SYNC command: " + std::string(e.what()));
+    }
+}
+
+std::string hash_password(const std::string& password) {
+    char hashed_password[crypto_pwhash_STRBYTES];
+
+    // Generate a salt and hash the password
+    if (crypto_pwhash_str(
+            hashed_password,
+            password.c_str(),
+            password.size(),
+            crypto_pwhash_OPSLIMIT_INTERACTIVE,
+            crypto_pwhash_MEMLIMIT_INTERACTIVE) != 0) {
+        throw std::runtime_error("Failed to hash password with libsodium.");
+    }
+
+    return std::string(hashed_password);
+}
+
+void load_password_file(const std::string& passwd_file, std::unordered_map<std::string, std::string>& user_passwords) {
+    std::ifstream file(passwd_file);
+    if (!file.is_open()) {
+        std::cerr << "Password file not found. Creating a new one." << std::endl;
+        return;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        auto delimiter_pos = line.find(":");
+        if (delimiter_pos != std::string::npos) {
+            std::string username = line.substr(0, delimiter_pos);
+            std::string hashed_password = line.substr(delimiter_pos + 1);
+            user_passwords[username] = hashed_password;
+        }
+    }
+}
+
+void save_password_file(const std::string& passwd_file, const std::unordered_map<std::string, std::string>& user_passwords) {
+    std::ofstream file(passwd_file, std::ios::trunc);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open password file for writing.");
+    }
+
+    for (const auto& [username, hashed_password] : user_passwords) {
+        file << username << ":" << hashed_password << "\n";
+    }
+}
+
+bool authenticate_user(const std::string& username, const std::string& password, const std::unordered_map<std::string, std::string>& user_passwords) {
+    auto it = user_passwords.find(username);
+    if (it != user_passwords.end()) {
+        // Verify the password against the stored hash
+        return crypto_pwhash_str_verify(it->second.c_str(), password.c_str(), password.size()) == 0;
+    }
+    return false;
+}
+
+void handle_authentication(asio::ip::tcp::socket& socket, const std::string& root_path, const std::string& passwd_file) {
+    static std::unordered_map<std::string, std::string> user_passwords;
+    if (user_passwords.empty()) {
+        load_password_file(passwd_file, user_passwords);
+    }
+
+    try {
+        // Receive username and password
+        asio::streambuf buffer;
+        asio::read_until(socket, buffer, '\n');
+        std::istream request_stream(&buffer);
+        std::string request_message;
+        std::getline(request_stream, request_message);
+
+        auto request = json::parse(request_message);
+        std::string username = request.at("username").get<std::string>();
+        std::string password = request.at("password").get<std::string>();
+
+        std::cout << "[DEBUG] Received authentication request for user: " << username << std::endl;
+
+        if (username == "public") {
+            send_response(socket, "OK", "Public user. No authentication required.");
+            return;
+        }
+
+        if (authenticate_user(username, password, user_passwords)) {
+            send_response(socket, "OK", "Authentication successful.");
+            std::cout << "[DEBUG] Authentication status: Success" << std::endl;
+        } else {
+            // If user does not exist, suggest creating an account
+            if (user_passwords.find(username) == user_passwords.end()) {
+                send_response(socket, "NEW_USER", "User not found. Create a new account.");
+
+                // Wait for the user to send a new password
+                asio::streambuf new_user_buffer;
+                asio::read_until(socket, new_user_buffer, '\n');
+                std::istream new_user_stream(&new_user_buffer);
+                std::string new_user_message;
+                std::getline(new_user_stream, new_user_message);
+
+                auto new_user_request = json::parse(new_user_message);
+                std::string new_password = new_user_request.at("password").get<std::string>();
+
+                // Hash and save the new password
+                user_passwords[username] = hash_password(new_password);
+                save_password_file(passwd_file, user_passwords);
+
+                // Create user directory
+                create_user_directory(root_path, username);
+
+                send_response(socket, "OK", "Account created successfully.");
+                std::cout << "[DEBUG] New account created for user: " << username << std::endl;
+            } else {
+                send_response(socket, "ERROR", "Invalid password.");
+                std::cout << "[DEBUG] Authentication status: Failure" << std::endl;
+            }
+        }
+    } catch (const std::exception& e) {
+        send_response(socket, "ERROR", std::string("Authentication failed: ") + e.what());
+    }
+}
+
 void handle_command(const std::string& username, const std::string& root_path, asio::ip::tcp::socket& socket, const json& json_message) {
     try {
         // Extract the command and arguments
@@ -615,6 +774,8 @@ void handle_command(const std::string& username, const std::string& root_path, a
             handle_move(username, root_path, socket, args);
         } else if (command == "COPY") {
             handle_copy(username, root_path, socket, args);
+        } else if (command == "SYNC") {
+            handle_sync(username, root_path, socket);
         } else {
             // Placeholder for other commands
             send_response(socket, "success", "Command received: " + command);
@@ -649,9 +810,8 @@ void handle_client(asio::ip::tcp::socket& socket, const std::string& root_path) 
         // Create a directory for the user if it doesn't exist
         create_user_directory(root_path, username);
 
-        // Send a welcome message to the client
-        //send_response(socket, "success", "Welcome, " + username + "!");
-        log_debug("Welcome message sent to: " + username);
+        // Handle authentication
+        handle_authentication(socket, root_path, "passwd.txt");
 
         while (true) {
             // Read a message from the client
