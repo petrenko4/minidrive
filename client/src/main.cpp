@@ -747,13 +747,10 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
         {
             std::string relative_path = std::filesystem::relative(entry.path(), local_root).string();
             std::cout << "[DEBUG] hashing: " << entry.path() << '\n';
-            if (!entry.is_directory())
-            {
-                std::cout << "[DEBUG] size: "
-                          << std::filesystem::file_size(entry.path())
-                          << '\n';
-            }
-
+            if(!entry.is_directory())
+            std::cout << "[DEBUG] size: "
+                      << std::filesystem::file_size(entry.path())
+                      << '\n';
             std::cout << "[DEBUG] absolute path: " << std::filesystem::absolute(entry.path()) << '\n';
             if (entry.is_regular_file())
             {
@@ -851,6 +848,20 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
                 if (rmdir_response.at("status").get<std::string>() != "OK")
                 {
                     throw std::runtime_error("RMDIR command failed: " + rmdir_response.at("message").get<std::string>());
+                }
+
+                // Remove all entries related to the directory from the server's map
+                for (auto it = server_files.begin(); it != server_files.end(); )
+                {
+                    if (it->first.find(server_path + "/") == 0) // Check if the path starts with the directory path
+                    {
+                        log_debug("Removing server map entry: " + it->first);
+                        it = server_files.erase(it); // Erase and advance iterator
+                    }
+                    else
+                    {
+                        ++it;
+                    }
                 }
             }
         }
