@@ -10,18 +10,20 @@
 
 using json = nlohmann::json;
 
-bool parse_arguments(int argc, char* argv[], std::string& connection, std::string& log_file) {
-    if (argc < 2 || argc > 4) {
+bool parse_arguments(int argc, char *argv[], std::string &connection, std::string &log_file)
+{
+    if (argc < 2 || argc > 4)
+    {
         std::cerr << "Usage: " << argv[0] << " [username@]<server_ip>:<port> [--log <log_file>]\n";
         return false;
-    
-
     }
 
     connection = argv[1];
 
-    if (argc == 4) {
-        if (std::string(argv[2]) != "--log") {
+    if (argc == 4)
+    {
+        if (std::string(argv[2]) != "--log")
+        {
             std::cerr << "Invalid option: " << argv[2] << "\n";
             std::cerr << "Usage: " << argv[0] << " [username@]<server_ip>:<port> [--log <log_file>]\n";
             return false;
@@ -32,20 +34,24 @@ bool parse_arguments(int argc, char* argv[], std::string& connection, std::strin
     return true;
 }
 
-bool parse_connection_string(const std::string& connection, std::string& ip, std::string& port) {
-    std::regex pattern(R"((?:[^@]+@)?([^:]+):(\d+))"); // Reverted regex to original
+bool parse_connection_string(const std::string &connection, std::string &ip, std::string &port)
+{
+    std::regex pattern(R"(^(?:([^@]+)@)?([^:]+):(\d+)$)");
+
     std::smatch matches;
 
-    if (std::regex_match(connection, matches, pattern)) {
-        ip = matches[1].str();
-        port = matches[2].str();
+    if (std::regex_match(connection, matches, pattern))
+    {
+        ip = matches[2].str();
+        port = matches[3].str();
         return true;
     }
 
     return false;
 }
 
-void print_available_commands() {
+void print_available_commands()
+{
     std::cout << "Available commands:\n";
     std::cout << "  LIST [path]         - Lists files and folders in the given path. If no path is given, lists the current directory.\n";
     std::cout << "  UPLOAD <local_path> [remote_path] - Uploads a file from the client’s local file system to the server. If remote_path is omitted, the same name is used.\n";
@@ -60,57 +66,79 @@ void print_available_commands() {
     std::cout << "  EXIT                - Closes the connection and terminates the client.\n";
 }
 
-bool validate_command(const std::string& input) {
+bool validate_command(const std::string &input)
+{
     std::istringstream iss(input);
     std::string command;
     iss >> command;
 
-    if (command == "LIST") {
+    if (command == "LIST")
+    {
         // LIST can optionally have one argument
         std::string path;
-        if (iss >> path) {
+        if (iss >> path)
+        {
             return true;
         }
         return true; // No argument is also valid
-    } else if (command == "UPLOAD") {
+    }
+    else if (command == "UPLOAD")
+    {
         // UPLOAD requires at least one argument (local_path)
         std::string local_path;
-        if (iss >> local_path) {
+        if (iss >> local_path)
+        {
             return true;
         }
         return false;
-    } else if (command == "DOWNLOAD") {
+    }
+    else if (command == "DOWNLOAD")
+    {
         // DOWNLOAD requires at least one argument (remote_path)
         std::string remote_path;
-        if (iss >> remote_path) {
+        if (iss >> remote_path)
+        {
             return true;
         }
         return false;
-    } else if (command == "DELETE") {
+    }
+    else if (command == "DELETE")
+    {
         // DELETE requires exactly one argument (path)
         std::string path;
-        if (iss >> path) {
+        if (iss >> path)
+        {
             return true;
         }
         return false;
-    } else if (command == "CD" || command == "MKDIR" || command == "RMDIR") {
+    }
+    else if (command == "CD" || command == "MKDIR" || command == "RMDIR")
+    {
         // CD, MKDIR, RMDIR require exactly one argument (path)
         std::string path;
-        if (iss >> path) {
+        if (iss >> path)
+        {
             return true;
         }
         return false;
-    } else if (command == "MOVE" || command == "COPY") {
+    }
+    else if (command == "MOVE" || command == "COPY")
+    {
         // MOVE, COPY require two arguments (src and dst)
         std::string src, dst;
-        if (iss >> src >> dst) {
+        if (iss >> src >> dst)
+        {
             return true;
         }
         return false;
-    } else if (command == "SYNC") {
+    }
+    else if (command == "SYNC")
+    {
         // SYNC requires no arguments
         return true;
-    } else if (command == "HELP" || command == "EXIT") {
+    }
+    else if (command == "HELP" || command == "EXIT")
+    {
         // HELP and EXIT require no arguments
         return true;
     }
@@ -118,7 +146,8 @@ bool validate_command(const std::string& input) {
     return false; // Unknown command
 }
 
-std::string create_json_command(const std::string& input) {
+std::string create_json_command(const std::string &input)
+{
     std::istringstream iss(input);
     std::string command;
     iss >> command;
@@ -126,29 +155,43 @@ std::string create_json_command(const std::string& input) {
     json json_command;
     json_command["cmd"] = command;
 
-    if (command == "LIST") {
+    if (command == "LIST")
+    {
         std::string path;
-        if (iss >> path) {
+        if (iss >> path)
+        {
             json_command["args"]["path"] = path;
-        } else {
+        }
+        else
+        {
             json_command["args"]["path"] = "."; // Default to current directory
         }
-    } else if (command == "UPLOAD" || command == "DOWNLOAD") {
+    }
+    else if (command == "UPLOAD" || command == "DOWNLOAD")
+    {
         std::string first_arg, second_arg;
-        if (iss >> first_arg) {
+        if (iss >> first_arg)
+        {
             json_command["args"][command == "UPLOAD" ? "local_path" : "remote_path"] = first_arg;
-            if (iss >> second_arg) {
+            if (iss >> second_arg)
+            {
                 json_command["args"][command == "UPLOAD" ? "remote_path" : "local_path"] = second_arg;
             }
         }
-    } else if (command == "DELETE" || command == "CD" || command == "MKDIR" || command == "RMDIR") {
+    }
+    else if (command == "DELETE" || command == "CD" || command == "MKDIR" || command == "RMDIR")
+    {
         std::string path;
-        if (iss >> path) {
+        if (iss >> path)
+        {
             json_command["args"]["path"] = path;
         }
-    } else if (command == "MOVE" || command == "COPY") {
+    }
+    else if (command == "MOVE" || command == "COPY")
+    {
         std::string src, dst;
-        if (iss >> src >> dst) {
+        if (iss >> src >> dst)
+        {
             json_command["args"]["src"] = src;
             json_command["args"]["dst"] = dst;
         }
@@ -157,12 +200,15 @@ std::string create_json_command(const std::string& input) {
     return json_command.dump();
 }
 
-void log_debug(const std::string& message) {
+void log_debug(const std::string &message)
+{
     std::cout << "[DEBUG] " << message << "\n";
 }
 
-void upload_file(asio::ip::tcp::socket& socket, const std::string& local_path, const std::string& remote_path) {
-    try {
+void upload_file(asio::ip::tcp::socket &socket, const std::string &local_path, const std::string &remote_path)
+{
+    try
+    {
         log_debug("Preparing to upload file: " + local_path + " as " + remote_path);
 
         // Create the JSON command
@@ -186,7 +232,8 @@ void upload_file(asio::ip::tcp::socket& socket, const std::string& local_path, c
         std::string status = response.at("status").get<std::string>();
         log_debug("Server response status: " + status);
 
-        if (status != "ready") {
+        if (status != "ready")
+        {
             std::cerr << "Server is not ready: " << response.at("message").get<std::string>() << "\n";
             log_debug("Server not ready message: " + response.at("message").get<std::string>());
             return;
@@ -196,7 +243,8 @@ void upload_file(asio::ip::tcp::socket& socket, const std::string& local_path, c
 
         // Open the file for reading
         std::ifstream input_file(local_path, std::ios::binary);
-        if (!input_file.is_open()) {
+        if (!input_file.is_open())
+        {
             throw std::runtime_error("Failed to open file: " + local_path);
         }
 
@@ -214,7 +262,8 @@ void upload_file(asio::ip::tcp::socket& socket, const std::string& local_path, c
         // Send the file data
         char buffer_data[1024];
         size_t bytes_sent = 0;
-        while (bytes_sent < file_size) {
+        while (bytes_sent < file_size)
+        {
             input_file.read(buffer_data, sizeof(buffer_data));
             std::streamsize bytes_read = input_file.gcount();
             asio::write(socket, asio::buffer(buffer_data, bytes_read));
@@ -235,14 +284,18 @@ void upload_file(asio::ip::tcp::socket& socket, const std::string& local_path, c
         auto ack_response = json::parse(ack_message);
         log_debug("Server acknowledgment: " + ack_response.dump());
         std::cout << "Server response: " << ack_response.dump() << "\n";
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Error during file upload: " << e.what() << "\n";
         log_debug("Error during upload: " + std::string(e.what()));
     }
 }
 
-void process_list_command(asio::ip::tcp::socket& socket, const std::string& input) {
-    try {
+void process_list_command(asio::ip::tcp::socket &socket, const std::string &input)
+{
+    try
+    {
         // Create JSON command for LIST
         std::string json_command = create_json_command(input);
 
@@ -261,13 +314,17 @@ void process_list_command(asio::ip::tcp::socket& socket, const std::string& inpu
         auto response = json::parse(response_message);
         std::string status = response.at("status").get<std::string>();
 
-        if (status == "OK") {
+        if (status == "OK")
+        {
             auto data = response.value("data", json::object());
-            if (data.contains("entries")) {
+            if (data.contains("entries"))
+            {
                 auto entries = data.at("entries");
-                if (entries.is_array()) {
+                if (entries.is_array())
+                {
                     std::cout << "Files and directories received from server:\n";
-                    for (const auto& entry : entries) {
+                    for (const auto &entry : entries)
+                    {
                         std::string name = entry.value("name", "<unknown>");
                         std::string type = entry.value("type", "<unknown>");
                         std::cout << "  [" << type << "] " << name << "\n";
@@ -276,20 +333,27 @@ void process_list_command(asio::ip::tcp::socket& socket, const std::string& inpu
             }
 
             // Display total entries
-            if (data.contains("total_entries")) {
+            if (data.contains("total_entries"))
+            {
                 size_t total_entries = data.at("total_entries").get<size_t>();
                 std::cout << "Total entries: " << total_entries << "\n";
             }
-        } else {
+        }
+        else
+        {
             std::cerr << "Error from server: " << response.at("message").get<std::string>() << "\n";
         }
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Error processing LIST command: " << e.what() << "\n";
     }
 }
 
-void process_delete_command(asio::ip::tcp::socket& socket, const std::string& input) {
-    try {
+void process_delete_command(asio::ip::tcp::socket &socket, const std::string &input)
+{
+    try
+    {
         // Create JSON command for DELETE
         std::string json_command = create_json_command(input);
 
@@ -308,42 +372,53 @@ void process_delete_command(asio::ip::tcp::socket& socket, const std::string& in
         auto response = json::parse(response_message);
         std::string status = response.at("status").get<std::string>();
 
-        if (status == "OK") {
+        if (status == "OK")
+        {
             std::cout << "File deleted successfully.\n";
-        } else {
+        }
+        else
+        {
             std::cerr << "Error from server: " << response.at("message").get<std::string>() << "\n";
         }
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Error processing DELETE command: " << e.what() << "\n";
     }
 }
 
-void process_download_command(asio::ip::tcp::socket& socket, const std::string& input) {
-    try {
+void process_download_command(asio::ip::tcp::socket &socket, const std::string &input)
+{
+    try
+    {
         // Parse the input to extract remote and local paths
         std::istringstream iss(input);
         std::string command, remote_path, local_path;
         iss >> command >> remote_path >> local_path;
 
-        if (remote_path.empty()) {
+        if (remote_path.empty())
+        {
             std::cerr << "DOWNLOAD command requires at least a remote path.\n";
             return;
         }
 
-        if (local_path.empty()) {
+        if (local_path.empty())
+        {
             // Default to the same name as the remote file
             local_path = remote_path;
         }
 
         // Check if the local file already exists
-        if (std::filesystem::exists(local_path)) {
+        if (std::filesystem::exists(local_path))
+        {
             std::cerr << "File already exists: " << local_path << ". Please delete it or choose a different name.\n";
             return;
         }
 
         // Try to open the local file for writing
         std::ofstream output_file(local_path, std::ios::binary);
-        if (!output_file.is_open()) {
+        if (!output_file.is_open())
+        {
             std::cerr << "Failed to open file for writing: " << local_path << "\n";
             return;
         }
@@ -368,7 +443,8 @@ void process_download_command(asio::ip::tcp::socket& socket, const std::string& 
         auto response = json::parse(response_message);
         std::string status = response.at("status").get<std::string>();
 
-        if (status != "ready") {
+        if (status != "ready")
+        {
             std::cerr << "Error from server: " << response.at("message").get<std::string>() << "\n";
             return;
         }
@@ -380,7 +456,8 @@ void process_download_command(asio::ip::tcp::socket& socket, const std::string& 
         // Receive the file data
         size_t bytes_received = 0;
         char data[1024];
-        while (bytes_received < file_size) {
+        while (bytes_received < file_size)
+        {
             size_t len = socket.read_some(asio::buffer(data, sizeof(data)));
             output_file.write(data, len);
             bytes_received += len;
@@ -390,19 +467,24 @@ void process_download_command(asio::ip::tcp::socket& socket, const std::string& 
 
         output_file.close();
         std::cout << "File downloaded successfully to: " << local_path << "\n";
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Error processing DOWNLOAD command: " << e.what() << "\n";
     }
 }
 
-void process_cd_command(asio::ip::tcp::socket& socket, const std::string& input) {
-    try {
+void process_cd_command(asio::ip::tcp::socket &socket, const std::string &input)
+{
+    try
+    {
         // Parse the input to extract the path
         std::istringstream iss(input);
         std::string command, path;
         iss >> command >> path;
 
-        if (path.empty()) {
+        if (path.empty())
+        {
             std::cerr << "CD command requires a path.\n";
             return;
         }
@@ -427,24 +509,31 @@ void process_cd_command(asio::ip::tcp::socket& socket, const std::string& input)
         auto response = json::parse(response_message);
         std::string status = response.at("status").get<std::string>();
 
-        if (status == "OK") {
+        if (status == "OK")
+        {
             std::string new_path = response.at("data").value("current_directory", "<unknown>");
             std::cout << "Directory changed to: " << new_path << "\n";
-        } else {
+        }
+        else
+        {
             std::cerr << "Error from server: " << response.at("message").get<std::string>() << "\n";
         }
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Error processing CD command: " << e.what() << "\n";
     }
 }
 
-void process_mkdir_command(asio::ip::tcp::socket& socket, const std::string& input) {
+void process_mkdir_command(asio::ip::tcp::socket &socket, const std::string &input)
+{
     // Parse the input to extract the path
     std::istringstream iss(input);
     std::string command, path;
     iss >> command >> path;
 
-    if (path.empty()) {
+    if (path.empty())
+    {
         std::cerr << "MKDIR command requires a path.\n";
         return;
     }
@@ -468,20 +557,25 @@ void process_mkdir_command(asio::ip::tcp::socket& socket, const std::string& inp
     auto response = json::parse(response_message);
     std::string status = response.at("status").get<std::string>();
 
-    if (status == "OK") {
+    if (status == "OK")
+    {
         std::cout << "Directory created successfully.\n";
-    } else {
+    }
+    else
+    {
         std::cerr << "Failed to create directory: " << response.at("message").get<std::string>() << "\n";
     }
 }
 
-void process_rmdir_command(asio::ip::tcp::socket& socket, const std::string& input) {
+void process_rmdir_command(asio::ip::tcp::socket &socket, const std::string &input)
+{
     // Parse the input to extract the path
     std::istringstream iss(input);
     std::string command, path;
     iss >> command >> path;
 
-    if (path.empty()) {
+    if (path.empty())
+    {
         std::cerr << "RMDIR command requires a path.\n";
         return;
     }
@@ -505,20 +599,25 @@ void process_rmdir_command(asio::ip::tcp::socket& socket, const std::string& inp
     auto response = json::parse(response_message);
     std::string status = response.at("status").get<std::string>();
 
-    if (status == "OK") {
+    if (status == "OK")
+    {
         std::cout << "Directory removed successfully.\n";
-    } else {
+    }
+    else
+    {
         std::cerr << "Failed to remove directory: " << response.at("message").get<std::string>() << "\n";
     }
 }
 
-void process_move_command(asio::ip::tcp::socket& socket, const std::string& input) {
+void process_move_command(asio::ip::tcp::socket &socket, const std::string &input)
+{
     // Parse the input to extract source and destination paths
     std::istringstream iss(input);
     std::string command, src, dst;
     iss >> command >> src >> dst;
 
-    if (src.empty() || dst.empty()) {
+    if (src.empty() || dst.empty())
+    {
         std::cerr << "MOVE command requires both source and destination paths.\n";
         return;
     }
@@ -543,20 +642,25 @@ void process_move_command(asio::ip::tcp::socket& socket, const std::string& inpu
     auto response = json::parse(response_message);
     std::string status = response.at("status").get<std::string>();
 
-    if (status == "OK") {
+    if (status == "OK")
+    {
         std::cout << "File or folder moved successfully.\n";
-    } else {
+    }
+    else
+    {
         std::cerr << "Failed to move file or folder: " << response.at("message").get<std::string>() << "\n";
     }
 }
 
-void process_copy_command(asio::ip::tcp::socket& socket, const std::string& input) {
+void process_copy_command(asio::ip::tcp::socket &socket, const std::string &input)
+{
     // Parse the input to extract source and destination paths
     std::istringstream iss(input);
     std::string command, src, dst;
     iss >> command >> src >> dst;
 
-    if (src.empty() || dst.empty()) {
+    if (src.empty() || dst.empty())
+    {
         std::cerr << "COPY command requires both source and destination paths.\n";
         return;
     }
@@ -581,15 +685,20 @@ void process_copy_command(asio::ip::tcp::socket& socket, const std::string& inpu
     auto response = json::parse(response_message);
     std::string status = response.at("status").get<std::string>();
 
-    if (status == "OK") {
+    if (status == "OK")
+    {
         std::cout << "File or folder copied successfully.\n";
-    } else {
+    }
+    else
+    {
         std::cerr << "Failed to copy file or folder: " << response.at("message").get<std::string>() << "\n";
     }
 }
 
-void process_sync_command(asio::ip::tcp::socket& socket, const std::string& local_root) {
-    try {
+void process_sync_command(asio::ip::tcp::socket &socket, const std::string &local_root)
+{
+    try
+    {
         log_debug("Sending SYNC command to server");
 
         // Create and send the SYNC command
@@ -608,7 +717,8 @@ void process_sync_command(asio::ip::tcp::socket& socket, const std::string& loca
         auto response = json::parse(response_message);
         std::string status = response.at("status").get<std::string>();
 
-        if (status != "OK") {
+        if (status != "OK")
+        {
             std::cerr << "SYNC command failed: " << response.at("message").get<std::string>() << "\n";
             return;
         }
@@ -617,7 +727,8 @@ void process_sync_command(asio::ip::tcp::socket& socket, const std::string& loca
 
         // Get the server file tree
         std::unordered_map<std::string, FileInfo> server_files;
-        for (const auto& [path, info] : response.at("data").items()) {
+        for (const auto &[path, info] : response.at("data").items())
+        {
             uint64_t hash = info.value("hash", 0);
             std::string type = info.value("type", "unknown");
             server_files[path] = FileInfo(hash, type);
@@ -625,39 +736,56 @@ void process_sync_command(asio::ip::tcp::socket& socket, const std::string& loca
 
         // Pretty-print server file tree
         log_debug("Server file tree:");
-        for (const auto& [path, info] : server_files) {
+        for (const auto &[path, info] : server_files)
+        {
             log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
         }
 
         // Build the local file tree
         std::unordered_map<std::string, FileInfo> local_files;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(local_root)) {
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(local_root))
+        {
             std::string relative_path = std::filesystem::relative(entry.path(), local_root).string();
+            std::cout << "[DEBUG] hashing: " << entry.path() << '\n';
+            if (!entry.is_directory())
+            {
+                std::cout << "[DEBUG] size: "
+                          << std::filesystem::file_size(entry.path())
+                          << '\n';
+            }
 
-            if (entry.is_regular_file()) {
+            std::cout << "[DEBUG] absolute path: " << std::filesystem::absolute(entry.path()) << '\n';
+            if (entry.is_regular_file())
+            {
                 uint64_t file_hash = hash_file(entry.path().string());
                 local_files[relative_path] = FileInfo(file_hash, "file");
-            } else if (entry.is_directory()) {
+            }
+            else if (entry.is_directory())
+            {
                 local_files[relative_path] = FileInfo(0, "directory");
             }
         }
 
         // Pretty-print local file tree
         log_debug("Local file tree:");
-        for (const auto& [path, info] : local_files) {
+        for (const auto &[path, info] : local_files)
+        {
             log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
         }
 
         // Compare server and local files
-        for (auto it = server_files.begin(); it != server_files.end();) {
-            const std::string& server_path = it->first;
-            const FileInfo& server_info = it->second;
+        for (auto it = server_files.begin(); it != server_files.end();)
+        {
+            const std::string &server_path = it->first;
+            const FileInfo &server_info = it->second;
 
             auto local_it = local_files.find(server_path);
-            if (local_it != local_files.end()) {
-                const FileInfo& local_info = local_it->second;
+            if (local_it != local_files.end())
+            {
+                const FileInfo &local_info = local_it->second;
 
-                if (server_info.type == "file" && local_info.hash == server_info.hash) {
+                if (server_info.type == "file" && local_info.hash == server_info.hash)
+                {
                     // Same file, remove from both maps
                     local_files.erase(local_it);
                     it = server_files.erase(it);
@@ -670,64 +798,23 @@ void process_sync_command(asio::ip::tcp::socket& socket, const std::string& loca
 
         // Debug: Print remaining server files
         log_debug("Remaining server files after comparison:");
-        for (const auto& [path, info] : server_files) {
+        for (const auto &[path, info] : server_files)
+        {
             log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
         }
 
         // Debug: Print remaining local files
         log_debug("Remaining local files after comparison:");
-        for (const auto& [path, info] : local_files) {
+        for (const auto &[path, info] : local_files)
+        {
             log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
         }
 
-        // Handle files in local_files (upload to server)
-        for (const auto& [local_path, local_info] : local_files) {
-            if (local_info.type == "file") {
-                log_debug("Uploading new file: " + local_path);
-
-                // Ensure the directory structure exists on the server
-                std::filesystem::path parent_path = std::filesystem::path(local_path).parent_path();
-                if (!parent_path.empty()) {
-                    json mkdir_command;
-                    mkdir_command["cmd"] = "MKDIR";
-                    mkdir_command["args"]["path"] = parent_path.string();
-                    asio::write(socket, asio::buffer(mkdir_command.dump() + "\n"));
-
-                    // Check server response for MKDIR
-                    asio::streambuf mkdir_buffer;
-                    asio::read_until(socket, mkdir_buffer, '\n');
-                    std::istream mkdir_response_stream(&mkdir_buffer);
-                    std::string mkdir_response_message;
-                    std::getline(mkdir_response_stream, mkdir_response_message);
-                    auto mkdir_response = json::parse(mkdir_response_message);
-                    if (mkdir_response.at("status").get<std::string>() != "OK") {
-                        throw std::runtime_error("MKDIR command failed: " + mkdir_response.at("message").get<std::string>());
-                    }
-                }
-
-                // Send the upload command
-                json upload_command;
-                upload_command["cmd"] = "UPLOAD";
-                upload_command["args"]["local_path"] = local_root + "/" + local_path;
-                upload_command["args"]["remote_path"] = local_path;
-                asio::write(socket, asio::buffer(upload_command.dump() + "\n"));
-
-                // Check server response for UPLOAD
-                asio::streambuf upload_buffer;
-                asio::read_until(socket, upload_buffer, '\n');
-                std::istream upload_response_stream(&upload_buffer);
-                std::string upload_response_message;
-                std::getline(upload_response_stream, upload_response_message);
-                auto upload_response = json::parse(upload_response_message);
-                if (upload_response.at("status").get<std::string>() != "OK") {
-                    throw std::runtime_error("UPLOAD command failed: " + upload_response.at("message").get<std::string>());
-                }
-            }
-        }
-
         // Handle files in server_files (delete from server)
-        for (const auto& [server_path, server_info] : server_files) {
-            if (server_info.type == "file") {
+        for (const auto &[server_path, server_info] : server_files)
+        {
+            if (server_info.type == "file")
+            {
                 log_debug("Deleting server file: " + server_path);
                 json delete_command;
                 delete_command["cmd"] = "DELETE";
@@ -741,10 +828,13 @@ void process_sync_command(asio::ip::tcp::socket& socket, const std::string& loca
                 std::string delete_response_message;
                 std::getline(delete_response_stream, delete_response_message);
                 auto delete_response = json::parse(delete_response_message);
-                if (delete_response.at("status").get<std::string>() != "OK") {
+                if (delete_response.at("status").get<std::string>() != "OK")
+                {
                     throw std::runtime_error("DELETE command failed: " + delete_response.at("message").get<std::string>());
                 }
-            } else if (server_info.type == "directory") {
+            }
+            else if (server_info.type == "directory")
+            {
                 log_debug("Deleting server directory: " + server_path);
                 json rmdir_command;
                 rmdir_command["cmd"] = "RMDIR";
@@ -758,76 +848,142 @@ void process_sync_command(asio::ip::tcp::socket& socket, const std::string& loca
                 std::string rmdir_response_message;
                 std::getline(rmdir_response_stream, rmdir_response_message);
                 auto rmdir_response = json::parse(rmdir_response_message);
-                if (rmdir_response.at("status").get<std::string>() != "OK") {
+                if (rmdir_response.at("status").get<std::string>() != "OK")
+                {
                     throw std::runtime_error("RMDIR command failed: " + rmdir_response.at("message").get<std::string>());
                 }
             }
         }
 
+        // Handle files in local_files (upload to server)
+        for (const auto &[local_path, local_info] : local_files)
+        {
+            if (local_info.type == "file")
+            {
+                log_debug("Uploading new file: " + local_path);
+
+                // Ensure the directory structure exists on the server
+                std::filesystem::path parent_path = std::filesystem::path(local_path).parent_path();
+                if (!parent_path.empty())
+                {
+                    json mkdir_command;
+                    mkdir_command["cmd"] = "MKDIR";
+                    mkdir_command["args"]["path"] = parent_path.string();
+                    asio::write(socket, asio::buffer(mkdir_command.dump() + "\n"));
+
+                    // Check server response for MKDIR
+                    asio::streambuf mkdir_buffer;
+                    asio::read_until(socket, mkdir_buffer, '\n');
+                    std::istream mkdir_response_stream(&mkdir_buffer);
+                    std::string mkdir_response_message;
+                    std::getline(mkdir_response_stream, mkdir_response_message);
+                    auto mkdir_response = json::parse(mkdir_response_message);
+                    if (mkdir_response.at("status").get<std::string>() != "OK")
+                    {
+                        throw std::runtime_error("MKDIR command failed: " + mkdir_response.at("message").get<std::string>());
+                    }
+                }
+
+                // Send the upload command
+                upload_file(socket, local_root + "/" + local_path, local_path);
+            }
+        }
+
         log_debug("Synchronization complete.");
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Error processing SYNC command: " << e.what() << "\n";
         log_debug("Error during SYNC command: " + std::string(e.what()));
     }
 }
 
-void interactive_shell(asio::ip::tcp::socket& socket) {
+void interactive_shell(asio::ip::tcp::socket &socket)
+{
     std::cout << "Enter commands. Type 'exit' to quit.\n";
 
-    while (true) {
-        try {
+    while (true)
+    {
+        try
+        {
             std::string input;
             std::cout << "> ";
             std::getline(std::cin, input);
 
-            if (input == "exit" || input == "EXIT") {
+            if (input == "exit" || input == "EXIT")
+            {
                 std::cout << "Exiting interactive shell.\n";
                 break;
             }
 
-            if (input == "HELP") {
+            if (input == "HELP")
+            {
                 print_available_commands();
                 continue;
             }
 
-            if (validate_command(input)) {
+            if (validate_command(input))
+            {
                 std::istringstream iss(input);
                 std::string command;
                 iss >> command;
 
-                if (command == "UPLOAD") {
+                if (command == "UPLOAD")
+                {
                     std::string local_path, remote_path;
                     iss >> local_path >> remote_path;
 
-                    if (local_path.empty()) {
+                    if (local_path.empty())
+                    {
                         std::cerr << "UPLOAD command requires at least a local path.\n";
                         continue;
                     }
 
-                    if (remote_path.empty()) {
+                    if (remote_path.empty())
+                    {
                         remote_path = local_path; // Default to the same name on the server
                     }
 
                     upload_file(socket, local_path, remote_path);
-                } else if (command == "LIST") {
+                }
+                else if (command == "LIST")
+                {
                     process_list_command(socket, input);
-                } else if (command == "DELETE") {
+                }
+                else if (command == "DELETE")
+                {
                     process_delete_command(socket, input);
-                } else if (command == "DOWNLOAD") {
+                }
+                else if (command == "DOWNLOAD")
+                {
                     process_download_command(socket, input);
-                } else if (command == "CD") {
+                }
+                else if (command == "CD")
+                {
                     process_cd_command(socket, input);
-                } else if (command == "MKDIR") {
+                }
+                else if (command == "MKDIR")
+                {
                     process_mkdir_command(socket, input);
-                } else if (command == "RMDIR") {
+                }
+                else if (command == "RMDIR")
+                {
                     process_rmdir_command(socket, input);
-                } else if (command == "MOVE") {
+                }
+                else if (command == "MOVE")
+                {
                     process_move_command(socket, input);
-                } else if (command == "COPY") {
+                }
+                else if (command == "COPY")
+                {
                     process_copy_command(socket, input);
-                } else if (command == "SYNC") {
+                }
+                else if (command == "SYNC")
+                {
                     process_sync_command(socket, "./mydata");
-                } else {
+                }
+                else
+                {
                     // Create JSON command for other commands
                     std::string json_command = create_json_command(input);
 
@@ -835,22 +991,28 @@ void interactive_shell(asio::ip::tcp::socket& socket) {
                     asio::write(socket, asio::buffer(json_command + "\n"));
                     std::cout << "Command sent to server: " << json_command << "\n";
                 }
-            } else {
+            }
+            else
+            {
                 std::cout << "Invalid command or missing arguments.\n";
                 print_available_commands();
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e)
+        {
             std::cerr << "Error: " << e.what() << "\n";
             break;
         }
     }
 }
 
-std::tuple<std::string, std::string, std::string> parse_client_arguments(const std::string& arg) {
+std::tuple<std::string, std::string, std::string> parse_client_arguments(const std::string &arg)
+{
     std::regex pattern(R"((\w+)?@?([\d\.]+):(\d+))");
     std::smatch match;
 
-    if (std::regex_match(arg, match, pattern) && match.size() == 4) {
+    if (std::regex_match(arg, match, pattern) && match.size() == 4)
+    {
         std::string username = match[1].matched ? match[1].str() : ""; // Default to empty string if username is not provided
         std::string ip = match[2].str();
         std::string port = match[3].str();
@@ -860,13 +1022,16 @@ std::tuple<std::string, std::string, std::string> parse_client_arguments(const s
     throw std::invalid_argument("Invalid argument format. Expected: [username@]<server_ip>:<port>");
 }
 
-void handle_authentication(asio::ip::tcp::socket& socket, const std::string& username) {
-    try {
+void handle_authentication(asio::ip::tcp::socket &socket, const std::string &username)
+{
+    try
+    {
 
         std::cout << "Authenticating as user: " << username << std::endl;
 
         std::string password = "322";
-        if (username != "public") {
+        if (username != "public")
+        {
             std::cout << "Enter the password: ";
             std::getline(std::cin, password);
         }
@@ -891,9 +1056,12 @@ void handle_authentication(asio::ip::tcp::socket& socket, const std::string& use
         auto response = json::parse(response_message);
         std::string status = response.at("status").get<std::string>();
 
-        if (status == "OK") {
+        if (status == "OK")
+        {
             std::cout << "Authentication successful." << std::endl;
-        } else if (status == "NEW_USER") {
+        }
+        else if (status == "NEW_USER")
+        {
             std::cout << "User not found. Creating a new account." << std::endl;
 
             // Prompt user for a new password
@@ -913,26 +1081,33 @@ void handle_authentication(asio::ip::tcp::socket& socket, const std::string& use
             std::getline(new_user_response_stream, new_user_response_message);
 
             auto new_user_response = json::parse(new_user_response_message);
-            if (new_user_response.at("status").get<std::string>() == "OK") {
+            if (new_user_response.at("status").get<std::string>() == "OK")
+            {
                 std::cout << "Account created successfully." << std::endl;
-            } else {
+            }
+            else
+            {
                 std::cerr << "Failed to create account: " << new_user_response.at("message").get<std::string>() << std::endl;
                 exit(EXIT_FAILURE); // Exit if account creation fails
             }
-        } else {
+        }
+        else
+        {
             std::cerr << "Authentication failed: " << response.at("message").get<std::string>() << std::endl;
             exit(EXIT_FAILURE); // Exit if authentication fails
         }
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Error during authentication: " << e.what() << std::endl;
     }
 }
 
-void attempt_connection(const std::string& arg) {
-    try {
+void attempt_connection(const std::string &arg)
+{
+    try
+    {
         auto [username, ip, port] = parse_client_arguments(arg);
-
-        
 
         asio::io_context io_context;
         asio::ip::tcp::resolver resolver(io_context);
@@ -942,7 +1117,7 @@ void attempt_connection(const std::string& arg) {
         asio::connect(socket, endpoints);
 
         std::string effective_username = username.empty() ? "public" : username;
-        
+
         // Send the username to the server
         asio::write(socket, asio::buffer(effective_username + "\n"));
 
@@ -952,20 +1127,27 @@ void attempt_connection(const std::string& arg) {
 
         // Start the interactive shell
         interactive_shell(socket);
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Failed to connect: " << e.what() << "\n";
     }
 }
 
-int main(int argc, char* argv[]) {
-    try {
-        if (argc != 2) {
+int main(int argc, char *argv[])
+{
+    try
+    {
+        if (argc != 2)
+        {
             throw std::invalid_argument("Usage: ./client username@<server_ip>:<port>");
         }
 
         std::string arg = argv[1];
         attempt_connection(arg);
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }

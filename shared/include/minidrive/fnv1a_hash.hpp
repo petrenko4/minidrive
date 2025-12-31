@@ -29,11 +29,11 @@ uint64_t hash_file(const std::string& file_path) {
     }
 
     constexpr size_t buffer_size = 4096;
-    char buffer[buffer_size];
+    unsigned char buffer[buffer_size];
     uint64_t hash = 0xcbf29ce484222325; // FNV offset basis
     constexpr uint64_t fnv_prime = 0x100000001b3;
 
-    while (file.read(buffer, buffer_size) || file.gcount() > 0) {
+    while (file.read(reinterpret_cast<char*>(buffer), buffer_size) || file.gcount() > 0) {
         size_t bytes_read = file.gcount();
         for (size_t i = 0; i < bytes_read; ++i) {
             hash ^= static_cast<uint64_t>(buffer[i]);
