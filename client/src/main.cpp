@@ -134,8 +134,12 @@ bool validate_command(const std::string &input)
     }
     else if (command == "SYNC")
     {
-        // SYNC requires no arguments
-        return true;
+        std::string src, dst;
+        if (iss >> src >> dst)
+        {
+            return true;
+        }
+        return false;
     }
     else if (command == "HELP" || command == "EXIT")
     {
@@ -209,7 +213,8 @@ void upload_file(asio::ip::tcp::socket &socket, const std::string &local_path, c
 {
     try
     {
-        log_debug("Preparing to upload file: " + local_path + " as " + remote_path);
+        // Commented out debug lines
+        // log_debug("Preparing to upload file: " + local_path + " as " + remote_path);
 
         // Create the JSON command
         json command;
@@ -218,7 +223,7 @@ void upload_file(asio::ip::tcp::socket &socket, const std::string &local_path, c
 
         // Send the command to the server
         asio::write(socket, asio::buffer(command.dump() + "\n"));
-        log_debug("Upload command sent: " + command.dump());
+        // log_debug("Upload command sent: " + command.dump());
 
         // Wait for the server's response
         asio::streambuf buffer;
@@ -230,16 +235,16 @@ void upload_file(asio::ip::tcp::socket &socket, const std::string &local_path, c
         // Parse the server's response
         auto response = json::parse(response_message);
         std::string status = response.at("status").get<std::string>();
-        log_debug("Server response status: " + status);
+        // log_debug("Server response status: " + status);
 
         if (status != "ready")
         {
             std::cerr << "Server is not ready: " << response.at("message").get<std::string>() << "\n";
-            log_debug("Server not ready message: " + response.at("message").get<std::string>());
+            // log_debug("Server not ready message: " + response.at("message").get<std::string>());
             return;
         }
 
-        log_debug("Server is ready to receive the file.");
+        // log_debug("Server is ready to receive the file.");
 
         // Open the file for reading
         std::ifstream input_file(local_path, std::ios::binary);
@@ -253,11 +258,11 @@ void upload_file(asio::ip::tcp::socket &socket, const std::string &local_path, c
         size_t file_size = input_file.tellg();
         input_file.seekg(0, std::ios::beg);
 
-        log_debug("File size: " + std::to_string(file_size));
+        // log_debug("File size: " + std::to_string(file_size));
 
         // Send the file size to the server
         asio::write(socket, asio::buffer(std::to_string(file_size) + "\n"));
-        log_debug("File size sent to server.");
+        // log_debug("File size sent to server.");
 
         // Send the file data
         char buffer_data[1024];
@@ -269,11 +274,11 @@ void upload_file(asio::ip::tcp::socket &socket, const std::string &local_path, c
             asio::write(socket, asio::buffer(buffer_data, bytes_read));
             bytes_sent += bytes_read;
 
-            log_debug("Sent " + std::to_string(bytes_sent) + " of " + std::to_string(file_size) + " bytes.");
+            // log_debug("Sent " + std::to_string(bytes_sent) + " of " + std::to_string(file_size) + " bytes.");
         }
 
         input_file.close();
-        log_debug("File upload completed: " + local_path);
+        // log_debug("File upload completed: " + local_path);
 
         // Wait for the server's acknowledgment
         asio::streambuf ack_buffer;
@@ -282,13 +287,14 @@ void upload_file(asio::ip::tcp::socket &socket, const std::string &local_path, c
         std::string ack_message;
         std::getline(ack_stream, ack_message);
         auto ack_response = json::parse(ack_message);
-        log_debug("Server acknowledgment: " + ack_response.dump());
-        std::cout << "Server response: " << ack_response.dump() << "\n";
+        // log_debug("Server acknowledgment: " + ack_response.dump());
+        // std::cout << "Server response: " << ack_response.dump() << "\n";
+        std::cout << "File uploaded successfully: " << remote_path << "\n";
     }
     catch (const std::exception &e)
     {
         std::cerr << "Error during file upload: " << e.what() << "\n";
-        log_debug("Error during upload: " + std::string(e.what()));
+        // log_debug("Error during upload: " + std::string(e.what()));
     }
 }
 
@@ -301,7 +307,7 @@ void process_list_command(asio::ip::tcp::socket &socket, const std::string &inpu
 
         // Send the JSON command to the server
         asio::write(socket, asio::buffer(json_command + "\n"));
-        std::cout << "LIST command sent to server: " << json_command << "\n";
+        // std::cout << "LIST command sent to server: " << json_command << "\n";
 
         // Wait for the server's response
         asio::streambuf buffer;
@@ -359,7 +365,7 @@ void process_delete_command(asio::ip::tcp::socket &socket, const std::string &in
 
         // Send the JSON command to the server
         asio::write(socket, asio::buffer(json_command + "\n"));
-        std::cout << "DELETE command sent to server: " << json_command << "\n";
+        // std::cout << "DELETE command sent to server: " << json_command << "\n";
 
         // Wait for the server's response
         asio::streambuf buffer;
@@ -430,7 +436,7 @@ void process_download_command(asio::ip::tcp::socket &socket, const std::string &
 
         // Send the JSON command to the server
         asio::write(socket, asio::buffer(json_command.dump() + "\n"));
-        std::cout << "DOWNLOAD command sent to server: " << json_command.dump() << "\n";
+        // std::cout << "DOWNLOAD command sent to server: " << json_command.dump() << "\n";
 
         // Wait for the server's response
         asio::streambuf buffer;
@@ -496,7 +502,7 @@ void process_cd_command(asio::ip::tcp::socket &socket, const std::string &input)
 
         // Send the JSON command to the server
         asio::write(socket, asio::buffer(json_command.dump() + "\n"));
-        std::cout << "CD command sent to server: " << json_command.dump() << "\n";
+        // std::cout << "CD command sent to server: " << json_command.dump() << "\n";
 
         // Wait for the server's response
         asio::streambuf buffer;
@@ -695,15 +701,43 @@ void process_copy_command(asio::ip::tcp::socket &socket, const std::string &inpu
     }
 }
 
-void process_sync_command(asio::ip::tcp::socket &socket, const std::string &local_root)
+static std::vector<std::string> collect_files_under(
+    const std::unordered_map<std::string, FileInfo> &server_files,
+    const std::string &dir)
 {
+    std::vector<std::string> result;
+    std::string prefix = dir + "/";
+
+    for (const auto &[path, info] : server_files)
+    {
+        if (info.type == "file" &&
+            (path == dir || path.rfind(prefix, 0) == 0))
+        {
+            result.push_back(path);
+        }
+    }
+    return result;
+}
+
+void process_sync_command(asio::ip::tcp::socket &socket, const std::string &src, const std::string &dst)
+{
+    size_t skipped_files = 0;
+    size_t uploaded_files = 0;
+    size_t deleted_files = 0;
+
+    std::vector<std::string> skipped_paths;
+    std::vector<std::string> uploaded_paths;
+    std::vector<std::string> deleted_paths;
+
     try
     {
-        log_debug("Sending SYNC command to server");
+        // Commented out debug lines
+        // log_debug("Sending SYNC command to server");
 
         // Create and send the SYNC command
         json sync_command;
         sync_command["cmd"] = "SYNC";
+        sync_command["args"]["dst"] = dst;
         asio::write(socket, asio::buffer(sync_command.dump() + "\n"));
 
         // Wait for the server's response
@@ -723,7 +757,7 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
             return;
         }
 
-        log_debug("SYNC command successful. Comparing file trees.");
+        // log_debug("SYNC command successful. Comparing file trees.");
 
         // Get the server file tree
         std::unordered_map<std::string, FileInfo> server_files;
@@ -735,23 +769,27 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
         }
 
         // Pretty-print server file tree
-        log_debug("Server file tree:");
+        // log_debug("Server file tree:");
         for (const auto &[path, info] : server_files)
         {
-            log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
+            // log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
         }
 
         // Build the local file tree
         std::unordered_map<std::string, FileInfo> local_files;
-        for (const auto &entry : std::filesystem::recursive_directory_iterator(local_root))
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(src))
         {
-            std::string relative_path = std::filesystem::relative(entry.path(), local_root).string();
-            std::cout << "[DEBUG] hashing: " << entry.path() << '\n';
-            if(!entry.is_directory())
-            std::cout << "[DEBUG] size: "
-                      << std::filesystem::file_size(entry.path())
-                      << '\n';
-            std::cout << "[DEBUG] absolute path: " << std::filesystem::absolute(entry.path()) << '\n';
+            std::string relative_path = std::filesystem::relative(entry.path(), src).string();
+            // std::cout << "[DEBUG] hashing: " << entry.path() << '\n';
+            // if (!entry.is_directory())
+            //     std::cout << "[DEBUG] size: "
+            //               << std::filesystem::file_size(entry.path())
+            //               << '\n';
+            // std::cout << "[DEBUG] absolute path: " << std::filesystem::absolute(entry.path()) << '\n';
+
+            if (relative_path == ".")
+                continue;
+
             if (entry.is_regular_file())
             {
                 uint64_t file_hash = hash_file(entry.path().string());
@@ -764,10 +802,10 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
         }
 
         // Pretty-print local file tree
-        log_debug("Local file tree:");
+        // log_debug("Local file tree:");
         for (const auto &[path, info] : local_files)
         {
-            log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
+            // log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
         }
 
         // Compare server and local files
@@ -783,6 +821,9 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
 
                 if (server_info.type == "file" && local_info.hash == server_info.hash)
                 {
+                    skipped_files++;
+                    skipped_paths.push_back(server_path);
+
                     // Same file, remove from both maps
                     local_files.erase(local_it);
                     it = server_files.erase(it);
@@ -794,17 +835,17 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
         }
 
         // Debug: Print remaining server files
-        log_debug("Remaining server files after comparison:");
+        // log_debug("Remaining server files after comparison:");
         for (const auto &[path, info] : server_files)
         {
-            log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
+            // log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
         }
 
         // Debug: Print remaining local files
-        log_debug("Remaining local files after comparison:");
+        // log_debug("Remaining local files after comparison:");
         for (const auto &[path, info] : local_files)
         {
-            log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
+            // log_debug("  Path: " + path + ", Type: " + info.type + ", Hash: " + std::to_string(info.hash));
         }
 
         // Handle files in server_files (delete from server)
@@ -812,7 +853,10 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
         {
             if (server_info.type == "file")
             {
-                log_debug("Deleting server file: " + server_path);
+                deleted_files++;
+                deleted_paths.push_back(server_path);
+
+                // log_debug("Deleting server file: " + server_path);
                 json delete_command;
                 delete_command["cmd"] = "DELETE";
                 delete_command["args"]["path"] = server_path;
@@ -832,7 +876,17 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
             }
             else if (server_info.type == "directory")
             {
-                log_debug("Deleting server directory: " + server_path);
+                // log_debug("Deleting server directory: " + server_path);
+
+                // 1. Collect files recursively BEFORE deletion
+                auto files = collect_files_under(server_files, server_path);
+
+                for (const auto &f : files)
+                {
+                    deleted_files++;
+                    deleted_paths.push_back(f);
+                }
+
                 json rmdir_command;
                 rmdir_command["cmd"] = "RMDIR";
                 rmdir_command["args"]["path"] = server_path;
@@ -851,11 +905,11 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
                 }
 
                 // Remove all entries related to the directory from the server's map
-                for (auto it = server_files.begin(); it != server_files.end(); )
+                for (auto it = server_files.begin(); it != server_files.end();)
                 {
                     if (it->first.find(server_path + "/") == 0) // Check if the path starts with the directory path
                     {
-                        log_debug("Removing server map entry: " + it->first);
+                        // log_debug("Removing server map entry: " + it->first);
                         it = server_files.erase(it); // Erase and advance iterator
                     }
                     else
@@ -866,46 +920,96 @@ void process_sync_command(asio::ip::tcp::socket &socket, const std::string &loca
             }
         }
 
+        // Create missing directories (sorted by depth)
+        std::vector<std::string> dirs_to_create;
+
+        for (const auto &[local_path, local_info] : local_files)
+        {
+            if (local_info.type == "directory")
+                dirs_to_create.push_back(local_path);
+        }
+
+        // Sort so parents come before children
+        std::sort(dirs_to_create.begin(), dirs_to_create.end(),
+                  [](const std::string &a, const std::string &b)
+                  {
+                      return std::count(a.begin(), a.end(), '/') <
+                             std::count(b.begin(), b.end(), '/');
+                  });
+
+        for (const auto &dir : dirs_to_create)
+        {
+            // log_debug("Creating directory on server: " + dir);
+
+            json mkdir_command;
+            mkdir_command["cmd"] = "MKDIR";
+            mkdir_command["args"]["path"] = dir;
+
+            asio::write(socket, asio::buffer(mkdir_command.dump() + "\n"));
+
+            asio::streambuf buffer;
+            asio::read_until(socket, buffer, '\n');
+
+            std::istream is(&buffer);
+            std::string response;
+            std::getline(is, response);
+
+            auto r = json::parse(response);
+            if (r.at("status") != "OK")
+            {
+                throw std::runtime_error("MKDIR failed for " + dir);
+            }
+        }
+
         // Handle files in local_files (upload to server)
         for (const auto &[local_path, local_info] : local_files)
         {
             if (local_info.type == "file")
             {
-                log_debug("Uploading new file: " + local_path);
 
-                // Ensure the directory structure exists on the server
-                std::filesystem::path parent_path = std::filesystem::path(local_path).parent_path();
-                if (!parent_path.empty())
-                {
-                    json mkdir_command;
-                    mkdir_command["cmd"] = "MKDIR";
-                    mkdir_command["args"]["path"] = parent_path.string();
-                    asio::write(socket, asio::buffer(mkdir_command.dump() + "\n"));
+                uploaded_files++;
+                uploaded_paths.push_back(local_path);
 
-                    // Check server response for MKDIR
-                    asio::streambuf mkdir_buffer;
-                    asio::read_until(socket, mkdir_buffer, '\n');
-                    std::istream mkdir_response_stream(&mkdir_buffer);
-                    std::string mkdir_response_message;
-                    std::getline(mkdir_response_stream, mkdir_response_message);
-                    auto mkdir_response = json::parse(mkdir_response_message);
-                    if (mkdir_response.at("status").get<std::string>() != "OK")
-                    {
-                        throw std::runtime_error("MKDIR command failed: " + mkdir_response.at("message").get<std::string>());
-                    }
-                }
+                // log_debug("Uploading new file: " + local_path);
 
                 // Send the upload command
-                upload_file(socket, local_root + "/" + local_path, local_path);
+                upload_file(socket, src + "/" + local_path, local_path);
             }
         }
 
-        log_debug("Synchronization complete.");
+        // log_debug("Synchronization complete.");
+        std::cout << "\n=== SYNC SUMMARY ===\n";
+        std::cout << "Files uploaded : " << uploaded_files << '\n';
+        std::cout << "Files deleted  : " << deleted_files << '\n';
+        std::cout << "Files skipped  : " << skipped_files << '\n';
+
+        if (!uploaded_paths.empty())
+        {
+            std::cout << "\nUploaded files:\n";
+            for (const auto &p : uploaded_paths)
+                std::cout << "  + " << p << '\n';
+        }
+
+        if (!deleted_paths.empty())
+        {
+            std::cout << "\nDeleted files:\n";
+            for (const auto &p : deleted_paths)
+                std::cout << "  - " << p << '\n';
+        }
+
+        if (!skipped_paths.empty())
+        {
+            std::cout << "\nSkipped files:\n";
+            for (const auto &p : skipped_paths)
+                std::cout << "  = " << p << '\n';
+        }
+
+        std::cout << "====================\n\n";
     }
     catch (const std::exception &e)
     {
         std::cerr << "Error processing SYNC command: " << e.what() << "\n";
-        log_debug("Error during SYNC command: " + std::string(e.what()));
+        // log_debug("Error during SYNC command: " + std::string(e.what()));
     }
 }
 
@@ -991,7 +1095,9 @@ void interactive_shell(asio::ip::tcp::socket &socket)
                 }
                 else if (command == "SYNC")
                 {
-                    process_sync_command(socket, "./mydata");
+                    std::string src, dst;
+                    iss >> src >> dst;
+                    process_sync_command(socket, src, dst);
                 }
                 else
                 {
@@ -1037,32 +1143,19 @@ void handle_authentication(asio::ip::tcp::socket &socket, const std::string &use
 {
     try
     {
+        // Step 1: Send username only
+        json user_request;
+        user_request["username"] = username;
+        asio::write(socket, asio::buffer(user_request.dump() + "\n"));
 
-        std::cout << "Authenticating as user: " << username << std::endl;
+        // std::cout << "[DEBUG] Sent username: " << username << std::endl;
 
-        std::string password = "322";
-        if (username != "public")
-        {
-            std::cout << "Enter the password: ";
-            std::getline(std::cin, password);
-        }
-
-        // Send authentication request to the server
-        json auth_request;
-        auth_request["username"] = username;
-        auth_request["password"] = password;
-        asio::write(socket, asio::buffer(auth_request.dump() + "\n"));
-
-        std::cout << "[DEBUG] Sending authentication request for user: " << username << std::endl;
-
-        // Wait for the server's response
+        // Step 2: Wait for server response
         asio::streambuf buffer;
         asio::read_until(socket, buffer, '\n');
         std::istream response_stream(&buffer);
         std::string response_message;
         std::getline(response_stream, response_message);
-
-        std::cout << "[DEBUG] Server response: " << response_message << std::endl;
 
         auto response = json::parse(response_message);
         std::string status = response.at("status").get<std::string>();
@@ -1070,47 +1163,71 @@ void handle_authentication(asio::ip::tcp::socket &socket, const std::string &use
         if (status == "OK")
         {
             std::cout << "Authentication successful." << std::endl;
+            std::cout << "[warning] operating in public mode - files are visible to everyone" << std::endl;
+            return;
+        }
+        else if (status == "PSWD_REQ")
+        {
+            // Existing user → ask for password
+            std::string password;
+            std::cout << "Enter password: ";
+            std::getline(std::cin, password);
+
+            json pw_request;
+            pw_request["password"] = password;
+            asio::write(socket, asio::buffer(pw_request.dump() + "\n"));
         }
         else if (status == "NEW_USER")
         {
-            std::cout << "User not found. Creating a new account." << std::endl;
-
-            // Prompt user for a new password
-            std::cout << "Enter a new password: ";
-            std::getline(std::cin, password);
-
-            // Send new account creation request
-            json new_user_request;
-            new_user_request["password"] = password;
-            asio::write(socket, asio::buffer(new_user_request.dump() + "\n"));
-
-            // Wait for the server's response
-            asio::streambuf new_user_buffer;
-            asio::read_until(socket, new_user_buffer, '\n');
-            std::istream new_user_response_stream(&new_user_buffer);
-            std::string new_user_response_message;
-            std::getline(new_user_response_stream, new_user_response_message);
-
-            auto new_user_response = json::parse(new_user_response_message);
-            if (new_user_response.at("status").get<std::string>() == "OK")
+            // New user → ask to create a password
+            std::cout << "User " << username << " not found. Register? (y/n):";
+            std::string ans;
+            std::cin >> ans;
+            if (ans == "y")
             {
-                std::cout << "Account created successfully." << std::endl;
+                std::cout << "Create password: ";
+                std::string password;
+                std::getline(std::cin >> std::ws, password);
+
+                json pw_request;
+                pw_request["password"] = password;
+                asio::write(socket, asio::buffer(pw_request.dump() + "\n"));
             }
             else
-            {
-                std::cerr << "Failed to create account: " << new_user_response.at("message").get<std::string>() << std::endl;
-                exit(EXIT_FAILURE); // Exit if account creation fails
-            }
+                exit(EXIT_FAILURE);
         }
         else
         {
-            std::cerr << "Authentication failed: " << response.at("message").get<std::string>() << std::endl;
-            exit(EXIT_FAILURE); // Exit if authentication fails
+            std::cerr << "Unexpected server status: " << status << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
+        // Step 3: Wait for server authentication result
+        asio::streambuf final_buffer;
+        asio::read_until(socket, final_buffer, '\n');
+        std::istream final_stream(&final_buffer);
+        std::string final_message;
+        std::getline(final_stream, final_message);
+
+        auto final_response = json::parse(final_message);
+        std::string final_status = final_response.at("status").get<std::string>();
+
+        if (final_status == "OK")
+        {
+            std::cout << "Authentication successful." << std::endl;
+            std::cout << "Logged as " << username << std::endl;
+        }
+        else
+        {
+            std::cerr << "Authentication failed: "
+                      << final_response.at("message").get<std::string>() << std::endl;
+            exit(EXIT_FAILURE);
         }
     }
     catch (const std::exception &e)
     {
         std::cerr << "Error during authentication: " << e.what() << std::endl;
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -1129,12 +1246,10 @@ void attempt_connection(const std::string &arg)
 
         std::string effective_username = username.empty() ? "public" : username;
 
-        // Send the username to the server
-        asio::write(socket, asio::buffer(effective_username + "\n"));
-
-        std::cout << "Successfully connected to " << ip << ":" << port << " as user " << effective_username << "\n";
         // Handle authentication
         handle_authentication(socket, effective_username);
+
+        std::cout << "Successfully connected to " << ip << ":" << port << " as user " << effective_username << "\n";
 
         // Start the interactive shell
         interactive_shell(socket);
